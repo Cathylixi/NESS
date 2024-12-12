@@ -10,6 +10,7 @@ The directory 'Code' includes R scripts for analyzing the example datasets, and 
 # Version
 
 1.0: findKmknn; R version 4.3.2 (2023-10-31) or older.
+
 2.0: findKNN; Other version of R.
 
 # Get Started
