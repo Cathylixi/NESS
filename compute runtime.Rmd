@@ -1,0 +1,128 @@
+
+#compute different GCP
+```{r}
+library(uwot)
+library(ggplot2)
+
+GCP = c(1,5,10,15,20,25,30,50,80,100,150,200,300,500,) 
+
+set.seed(123)  
+runtime.list <- list()
+
+for (j in 1:length(GCP)) {
+  perp = GCP[j]
+  set.seed(123)
+  knn.mat = list() 
+  
+  start_time <- Sys.time()  # Start timing
+
+  for (i in 1:N) {
+    set.seed(123 + i) 
+    out = uwot::umap(data.denoise, 
+                     n_neighbors = perp, 
+                     init = "lvrandom", 
+                     n_threads = 1, 
+                     seed = 123 + i)
+    
+    knn.mat[[i]] = findKmknn(out, k = 50)$index
+    print(c(i, j))
+  }
+  Y = out  # Store final UMAP output
+  
+  end_time <- Sys.time()  # End timing
+  runtime <- as.numeric(difftime(end_time, start_time, units = "secs"))  # Compute runtime in seconds
+  runtime.list[[as.character(perp)]] <- runtime  # Store runtime with GCP as key
+  print(paste("Runtime for n_neighbors", perp, ":", runtime, "seconds"))
+
+  # Save results
+  #save(knn.mat, Y, file = paste0(data.name, "_umap_lvrandom_p", perp, "_pc", pc, "_knnMat_umap.RData"))
+}
+```
+```{r}
+
+# Convert runtime list to data frame for plotting
+runtime_df <- data.frame(GCP = as.numeric(names(runtime.list)), Time = unlist(runtime.list))
+
+# Save computation time data
+save(runtime_df, file = "umap_computation_times.RData")
+
+# Plot computation time vs. GCP
+ggplot(runtime_df, aes(x = GCP, y = Time)) + 
+  geom_line() + 
+  geom_point() + 
+  labs(title = "UMAP Computation Time vs. n_neighbors", x = "n_neighbors (GCP)", y = "Computation Time (seconds)") 
+
+# Save the plot
+#ggsave("umap_computation_time_vs_GCP.png", width = 8, height = 6, units = "in")
+
+```
+
+
+# compute different subsample sizes (randomly selected)
+```{r}
+library(Rtsne)
+library(ggplot2)
+
+# Set the fixed perplexity value
+perplexity_value = 30  # Choose the perplexity value to analyze
+
+# Define different sample sizes for subsampling
+sample_sizes = c(100, 300, 500, 1000, 2000, 5000, 10000, 20000, length(cls))  # Adjust as needed
+
+set.seed(123)
+
+# Initialize list to store runtime
+runtime.list <- list()
+
+for (size in sample_sizes) {
+  
+  set.seed(123)  # Ensure reproducibility
+  
+  # Randomly select a subset of data.denoise
+  data_subset <- data.denoise[sample(nrow(data.denoise), size, replace = FALSE), ]
+  
+  knn.mat = list()
+  start_time <- Sys.time()  # Start timing
+  
+  for (i in 1:N) {
+    set.seed(123 + i)
+    
+    # Run t-SNE with fixed perplexity but different sample sizes
+    out <- Rtsne(data_subset, perplexity = perplexity_value, check_duplicates = FALSE, pca = FALSE, seed = 123 + i)
+    
+    knn.mat[[i]] = findKmknn(out$Y, k = 50)$index
+    print(c(i, size))  
+  }
+  
+  Y = out$Y  # Store final t-SNE output
+  
+  end_time <- Sys.time()  # End timing
+  runtime <- as.numeric(difftime(end_time, start_time, units = "secs"))  # Compute runtime in seconds
+  
+  runtime.list[[as.character(size)]] <- runtime  # Store runtime with sample size as key
+  print(paste("Runtime for sample size", size, ":", runtime, "seconds"))
+  
+  # Save results (optional)
+  # save(knn.mat, Y, file = paste0("tsne_sample_size_", size, ".RData"))
+}
+
+# Convert runtime list to data frame for plotting
+runtime_df <- data.frame(SampleSize = as.numeric(names(runtime.list)), Time = unlist(runtime.list))
+
+# Save computation time data
+save(runtime_df, file = "tsne_computation_times_sample_size.RData")
+
+# Plot computation time vs. sample size
+ggplot(runtime_df, aes(x = SampleSize, y = Time)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "t-SNE Computation Time vs. Sample Size",
+       x = "Sample Size",
+       y = "Computation Time (seconds)") +
+  theme_minimal()
+
+```
+
+
+
+

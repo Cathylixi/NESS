@@ -1,0 +1,1709 @@
+```{r}
+data.name = "mouse_hema"  #adjust as needed
+```
+
+#set GCP for future analysis:
+```{r}
+#mouse_hema tsne random
+GCP = c(1,2,3,4,5,6,7,8,9,10,12,15,20,25,30,40,50,80,100,150,200,300,500,700) 
+#mouse hema umap lvrandom:
+GCP = c(2,3,4,5,6,7,8,9,10,12,15,20,25,30,40,50,80,100,150,200,300,500,700,1000,1500) 
+#ipsc tsne random
+GCP = c(1,2,3,4,5,6,7,8,9,10,12,15,20,25,30,40,50,80,100,150,200,300)
+#murine intestinal tsne random
+GCP = c(1,2,3,4,5,6,7,8,9,10,12,15,20,25,30,40,50,80,100,150,200,300,500,700,1000) 
+#murine intestinal umap random
+GCP = c(2,3,4,5,6,7,8,9,10,12,15,20,25,30,40,50,80,100,150,200,300,500,700,1000,1200,1500,1700) 
+#embryoid body umap lvrandom
+GCP = c(2,3,4,5,6,7,8,9,10,12,15,20,25,30,50,70,100,120,150,200,300,500,800,1000,1200,1500,1800,2000,2500)
+
+#saddle
+GCP = c(1,2,3,4,5,6,7,8,9,10,12,15,20,25,30,40,50,80,100,150,200,300,500) 
+
+length(GCP) 
+
+N=30
+``` 
+
+
+#1 seed: Generating T-SNE result for multiple GCP (Figure 1A, 1B, 2B)
+```{r}
+#Generating T-SNE result
+set.seed(123)
+for(j in 1:length(GCP)){ 
+  perp = GCP[j]
+  set.seed(123)
+  knn.mat=list()
+  for(i in 1:N){  
+    out <- Rtsne(data.denoise, perplexity = perp, check_duplicates = FALSE, pca=FALSE, seed = 123)
+    knn.mat[[i]] = findKmknn(out$Y, k = 50)$index  #findKmknn
+    print(c(i,j))
+  }
+  Y=out$Y 
+  save(knn.mat, Y, file=paste0(data.name,"_tsne_random_p",perp,"_pc", pc,"_knnMat.RData"))
+}
+```
+```{r}
+# Load required libraries
+library(ggplot2)
+library(lisi)
+
+# Initialize variables
+local_stability <- c()
+global_stability <- c()
+concord.s <- c()
+sil.s <- c()
+cor.s <- c()
+db.s <- c()
+npurity.s <- c()
+clisi.s <- c()  # Add storage for cLISI scores
+
+for (jj in 1:length(GCP)) {
+  perp <- GCP[jj]
+  
+  # Load necessary data
+  load(file.path(paste0(data.name, "_tsne_random_p", perp, "_pc", pc, "_knnMat.RData")))
+  k <- 50
+  
+  # Accumulate neighbor counts (construct knn graph)
+  knn.graph <- matrix(0, ncol = dim(knn.mat[[1]])[1], nrow = dim(knn.mat[[1]])[1])
+  for (i in 1:N) {
+    for (j in 1:dim(knn.mat[[1]])[1]) {
+      knn.graph[j, knn.mat[[i]][j, 1:k]] <- knn.graph[j, knn.mat[[i]][j, 1:k]] + 1
+    }
+    knn.graph <- pmax(knn.graph, t(knn.graph))  # Ensure A -> B implies B -> A
+  }
+  
+  # Compute knn scores
+  knn.score <- c()
+  for (i in 1:dim(knn.mat[[1]])[1]) {
+    knn.score[i] <- quantile(knn.graph[i, which(knn.graph[i, ] != 0)] / N, 0.75)
+  }
+  local_stability[[jj]] <- knn.score
+  
+  # Plot data by cell type
+  plot.data <- data.frame(dim1 = Y[, 1], dim2 = Y[, 2], cell_type = cls)
+  plot11 <- ggplot(plot.data, aes(dim1, dim2, colour = cell_type)) +
+    geom_point(size = 1)
+  
+  # Plot data by knn score
+  plot.data <- data.frame(dim1 = Y[, 1], dim2 = Y[, 2], knn_score = knn.score)
+  plot22 <- ggplot(plot.data, aes(dim1, dim2, colour = knn_score)) +
+    geom_point(size = 1)
+  
+  # Save plots
+  #ggsave(filename = paste0("Test_", data.name, "_tsne_random_p", perp, "_pc", pc, "_cls.png"), plot = plot11, width = 8, height = 7, units = "in")
+  #ggsave(filename = paste0("Test_", data.name, "_tsne_random_p", perp, "_pc", pc, "_score.png"), plot = plot22, width = 8, height = 7, units = "in")
+  
+  # Compute stability score
+  global_stability[jj] <- mean(knn.score)
+  
+  # Compute concordance
+  knn.h <- findKmknn(data.denoise, k = 100)$index
+  knn.l <- findKmknn(Y, k = 100)$index
+  concord.score <- c()
+  for (i in 1:dim(knn.h)[1]) {
+    concord.score[i] <- length(intersect(knn.h[i, 1:100], knn.l[i, 1:100])) / 100
+  }
+  concord.s[jj] <- mean(concord.score)
+  
+  # Compute clustering metrics
+  sil.s[jj] <- mean(silhouette(as.numeric(cls), dist(Y))[, 3])
+  cor.s[jj] <- cor(dist(Y), dist(data.denoise))
+  db.s[jj] <- 1 / index.DB(Y, cl = as.numeric(cls))$DB
+  
+  # Compute normalized purity
+  npurity_score <- neighborPurity(
+    x = Y,
+    clusters = as.numeric(cls),
+    k = 50,
+    weighted = TRUE,
+    BNPARAM = KmknnParam(),
+    BPPARAM = SerialParam()
+  )
+  npurity.s[jj] <- mean(npurity_score$purity, na.rm = TRUE)
+  
+  # Compute cLISI for clustering
+  meta_data <- data.frame(cell_type = cls)  # Use cell type labels for LISI
+  lisi_scores <- compute_lisi(Y, meta_data, c("cell_type"))
+  clisi.s[jj] <- mean(lisi_scores$cell_type)  # Store cLISI score
+  
+  print(paste("Iteration", jj, "complete."))
+}
+
+clisi.s <- 1/ clisi.s
+
+# Visualization of metrics
+par(mfrow = c(1, 1), mar = c(5, 5, 4, 2), pty = "s", lwd = 2, cex = 1.3, asp = 1)
+
+# Define improved plot function
+plot_improved <- function(x, y, ylab, main_title) {
+  plot(x, y,
+       log = "x",
+       main = main_title,
+       xlab = "GCP",
+       ylab = ylab,
+       type = "l",
+       col = "black",
+       lwd = 2,
+       cex.lab = 1.4,
+       cex.main = 1.6,
+       cex.axis = 1.2
+  )
+  grid(col = "gray", lty = "dotted")
+  box(lwd = 2)
+}
+
+# Plot metrics
+plot_improved(GCP, global_stability, ylab = "KNN", main_title = paste(data.name, "- t-SNE Random Initialization: Global Stability"))
+plot_improved(GCP, concord.s, ylab = "Concordance", main_title = paste(data.name, "- t-SNE Random Initialization: Concordance Score"))
+plot_improved(GCP, cor.s, ylab = "Correlation", main_title = paste(data.name, "- t-SNE Random Initialization: Correlation Score"))
+plot_improved(GCP, db.s, ylab = "Davies-Bouldin", main_title = paste(data.name, "- t-SNE Random Initialization: DB Index"))
+plot_improved(GCP, sil.s, ylab = "Silhouette", main_title = paste(data.name, "- t-SNE Random Initialization: Silhouette Score"))
+plot_improved(GCP, npurity.s, ylab = "Purity", main_title = paste(data.name, "- t-SNE Random Initialization: Normalized Purity"))
+plot_improved(GCP, clisi.s, ylab = "cLISI", main_title = paste(data.name, "- t-SNE Random Initialization: Clustering LISI"))
+
+```
+
+#1 seed: Generating UMAP result for multiple GCP (Figure 1A, 1B, 2B)
+```{r}
+GCP = c(2,3,4,6,7,8,9,12,700,1000,1200,1500,1700) 
+
+set.seed(123)  
+runtime.list <- list() 
+for (j in 1:length(GCP)) {
+  perp = GCP[j]
+  set.seed(123)
+  knn.mat = list() 
+  
+  start_time <- Sys.time()
+
+  for (i in 1:N) {
+    set.seed(123 + i) 
+    out = uwot::umap(data.denoise, n_neighbors = perp, init = "lvrandom", n_threads = 1, seed = 123 + i)
+    knn.mat[[i]] = findKmknn(out, k = 50)$index
+    print(c(i, j))
+  }
+  Y = out
+  
+  end_time <- Sys.time()
+  runtime <- end_time - start_time
+  runtime.list[[j]] <- runtime  # Store runtime in the list
+  print(paste("Runtime for perplexity", perp, ":", runtime))
+  
+  save(knn.mat, Y, file = paste0(data.name, "_umap_lvrandom_p", perp, "_pc", pc, "_knnMat_umap.RData"))
+}
+```
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(lisi)
+
+# Initialize metrics
+local_stability <- c()
+global_stability <- c()
+concord.s <- c()
+sil.s <- c()
+cor.s <- c()
+db.s <- c()
+npurity.s <- c()
+clisi.s <- c()  # Storage for cLISI scores
+
+for (jj in 1:length(GCP)) {
+  perp <- GCP[jj]
+  
+  # Load UMAP-related data
+  load(file.path(paste0(data.name, "_umap_lvrandom_p", perp, "_pc", pc, "_knnMat_umap.RData")))
+  k <- 50
+  
+  # Accumulate neighbor counts (construct KNN graph)
+  knn.graph <- matrix(0, ncol = dim(knn.mat[[1]])[1], nrow = dim(knn.mat[[1]])[1])
+  for (i in 1:N) {
+    for (j in 1:dim(knn.mat[[1]])[1]) {
+      knn.graph[j, knn.mat[[i]][j, 1:k]] <- knn.graph[j, knn.mat[[i]][j, 1:k]] + 1
+    }
+    knn.graph <- pmax(knn.graph, t(knn.graph))  # Ensure A -> B implies B -> A
+  }
+  
+  # Compute KNN scores
+  knn.score <- c()
+  for (i in 1:dim(knn.mat[[1]])[1]) {
+    knn.score[i] <- quantile(knn.graph[i, which(knn.graph[i, ] != 0)] / N, 0.75)
+  }
+  local_stability[[jj]] <- knn.score
+  
+  # Plot data by cell type
+  plot.data <- data.frame(dim1 = Y[, 1], dim2 = Y[, 2], cell_type = cls)
+  plot11 <- ggplot(plot.data, aes(dim1, dim2, colour = cell_type)) +
+    geom_point(size = 1)
+  
+  # Plot data by KNN score
+  plot.data <- data.frame(dim1 = Y[, 1], dim2 = Y[, 2], knn_score = knn.score)
+  plot22 <- ggplot(plot.data, aes(dim1, dim2, colour = knn_score)) +
+    geom_point(size = 1)
+  print(plot22)
+  
+  # Save plots
+  #ggsave(filename = paste0(data.name, "_umap_lvrandom_p", perp, "_pc", pc, "_cls.png"), plot = plot11, width = 8, height = 7, units = "in")
+  #ggsave(filename = paste0(data.name, "_umap_lvrandom_p", perp, "_pc", pc, "_score.png"), plot = plot22, width = 8, height = 7, units = "in")
+  
+  # Compute stability score
+  global_stability[jj] <- mean(knn.score)
+  
+  # Compute concordance
+  knn.h <- findKmknn(data.denoise, k = 100)$index
+  knn.l <- findKmknn(Y, k = 100)$index
+  concord.score <- c()
+  for (i in 1:dim(knn.h)[1]) {
+    concord.score[i] <- length(intersect(knn.h[i, 1:100], knn.l[i, 1:100])) / 100
+  }
+  concord.s[jj] <- mean(concord.score)
+  
+  # Compute clustering metrics
+  sil.s[jj] <- mean(silhouette(as.numeric(cls), dist(Y))[, 3])
+  cor.s[jj] <- cor(dist(Y), dist(data.denoise))
+  db.s[jj] <- 1 / index.DB(Y, cl = as.numeric(cls))$DB
+  
+  # Compute normalized purity
+  npurity_score <- neighborPurity(
+    x = Y,
+    clusters = as.numeric(cls),
+    k = 50,
+    weighted = TRUE,
+    BNPARAM = KmknnParam(),
+    BPPARAM = SerialParam()
+  )
+  npurity.s[jj] <- mean(npurity_score$purity, na.rm = TRUE)
+  
+  # Compute cLISI (Clustering LISI) score
+  meta_data <- data.frame(cell_type = cls)  # Use cell type labels for LISI
+  lisi_scores <- compute_lisi(Y, meta_data, c("cell_type"))
+  clisi.s[jj] <- mean(lisi_scores$cell_type)  # Store cLISI score
+  
+  print(paste("Iteration", jj, "complete."))
+}
+
+# Visualization of metrics
+par(mfrow = c(1, 1), mar = c(5, 5, 4, 2), pty = "s", lwd = 2, cex = 1.3, asp = 1)
+
+# Define improved plot function
+plot_improved <- function(x, y, ylab, main_title) {
+  plot(x, y,
+       log = "x",
+       main = main_title,
+       xlab = "GCP",
+       ylab = ylab,
+       type = "l",
+       col = "black",
+       lwd = 2,
+       cex.lab = 1.4,
+       cex.main = 1.6,
+       cex.axis = 1.2
+  )
+  grid(col = "gray", lty = "dotted")
+  box(lwd = 2)
+}
+
+clisi.s <- 1/ clisi.s
+
+# Plot metrics
+plot_improved(GCP, global_stability, ylab = "KNN", main_title = paste(data.name, "- UMAP Random Initialization: Global Stability"))
+plot_improved(GCP, concord.s, ylab = "Concordance", main_title = paste(data.name, "- UMAP Random Initialization: Concordance Score"))
+plot_improved(GCP, cor.s, ylab = "Correlation", main_title = paste(data.name, "- UMAP Random Initialization: Correlation Score"))
+plot_improved(GCP, db.s, ylab = "Davies-Bouldin", main_title = paste(data.name, "- UMAP Random Initialization: DB Index"))
+plot_improved(GCP, sil.s, ylab = "Silhouette", main_title = paste(data.name, "- UMAP Random Initialization: Silhouette Score"))
+plot_improved(GCP, npurity.s, ylab = "Purity", main_title = paste(data.name, "- UMAP Random Initialization: Normalized Purity"))
+plot_improved(GCP, clisi.s, ylab = "cLISI", main_title = paste(data.name, "- UMAP Random Initialization: Clustering LISI"))
+
+```
+
+#3 seeds: Generating T-SNE result for multiple GCP
+```{r}
+set.seed(123)  
+
+seeds <- c(123, 234,234)  # Define three different seeds
+
+for (seed in seeds) {  # Loop over each seed
+  for (j in 1:length(GCP)) {  # Loop over each GCP value
+    perp <- GCP[j]
+    set.seed(seed)  # Set the current seed
+    knn.mat <- list()
+    
+    for (i in 1:N) {  # Loop for stability testing
+      out <- Rtsne(data.denoise, perplexity = perp, check_duplicates = FALSE, pca = FALSE, seed = seed)
+      knn.mat[[i]] <- findKmknn(out$Y, k = 50)$index
+      print(c(i, j, seed))  # Print progress with seed information
+    }
+    
+    Y <- out$Y
+    
+    # Save results with seed included in the file name
+    save(knn.mat, Y, file = paste0(data.name, "_tsne_random_p", perp, "_pc", pc, "_seed", seed, "_knnMat.RData"))
+  }
+}
+
+```
+```{r}
+# Define the seeds to be used
+seeds <- c(123, 234, 345)
+
+# Initialize variables to store averaged scores
+global_stability_avg <- numeric(length(GCP))
+concord_s_avg <- numeric(length(GCP))
+sil_s_avg <- numeric(length(GCP))
+cor_s_avg <- numeric(length(GCP))
+db_s_avg <- numeric(length(GCP))
+npurity_s_avg <- numeric(length(GCP))
+clisi_s_avg <- numeric(length(GCP))
+
+# Loop over GCP values
+for (jj in 1:length(GCP)) {
+  perp <- GCP[jj]
+  
+  # Initialize variables to store scores for all seeds
+  global_stability_list <- c()
+  concord_s_list <- c()
+  sil_s_list <- c()
+  cor_s_list <- c()
+  db_s_list <- c()
+  npurity_s_list <- c()
+  clisi_s_list <- c()
+  
+  # Loop over seeds
+  for (seed in seeds) {
+    set.seed(seed)
+    
+    # Load data for this GCP and seed
+    load(file.path(paste0(data.name, "_tsne_random_p", perp, "_pc", pc, "_seed", seed, "_knnMat.RData")))
+    k <- 50
+    
+    # Accumulate neighbor counts (construct knn graph)
+    knn.graph <- matrix(0, ncol = dim(knn.mat[[1]])[1], nrow = dim(knn.mat[[1]])[1])
+    for (i in 1:N) {
+      for (j in 1:dim(knn.mat[[1]])[1]) {
+        knn.graph[j, knn.mat[[i]][j, 1:k]] <- knn.graph[j, knn.mat[[i]][j, 1:k]] + 1
+      }
+      knn.graph <- pmax(knn.graph, t(knn.graph))  # Ensure symmetry
+    }
+    
+    # Compute KNN scores
+    knn.score <- sapply(1:dim(knn.mat[[1]])[1], function(i) {
+      quantile(knn.graph[i, which(knn.graph[i, ] != 0)] / N, 0.75)
+    })
+    global_stability_list <- c(global_stability_list, mean(knn.score))
+    
+    # Compute concordance
+    knn.h <- findKmknn(data.denoise, k = 100)$index
+    knn.l <- findKmknn(Y, k = 100)$index
+    concord.score <- sapply(1:dim(knn.h)[1], function(i) {
+      length(intersect(knn.h[i, 1:100], knn.l[i, 1:100])) / 100
+    })
+    concord_s_list <- c(concord_s_list, mean(concord.score))
+    
+    # Compute clustering metrics
+    sil_s_list <- c(sil_s_list, mean(silhouette(as.numeric(cls), dist(Y))[, 3], na.rm = TRUE))
+    cor_s_list <- c(cor_s_list, cor(dist(Y), dist(data.denoise), use = "complete.obs"))
+    db_s_list <- c(db_s_list, 1 / index.DB(Y, cl = as.numeric(cls))$DB)
+    
+    # Compute normalized purity
+    npurity_score <- neighborPurity(
+      x = Y,
+      clusters = as.numeric(cls),
+      k = 50,
+      weighted = TRUE,
+      BNPARAM = KmknnParam(),
+      BPPARAM = SerialParam()
+    )
+    npurity_s_list <- c(npurity_s_list, mean(npurity_score$purity, na.rm = TRUE))
+    
+    # Compute cLISI score
+    meta_data <- data.frame(cell_type = cls)
+    lisi_scores <- compute_lisi(Y, meta_data, c("cell_type"))
+    clisi_s_list <- c(clisi_s_list, mean(1 / lisi_scores$cell_type, na.rm = TRUE))
+  }
+  
+  # Average scores across seeds for this GCP
+  global_stability_avg[jj] <- mean(global_stability_list)
+  concord_s_avg[jj] <- mean(concord_s_list)
+  sil_s_avg[jj] <- mean(sil_s_list)
+  cor_s_avg[jj] <- mean(cor_s_list)
+  db_s_avg[jj] <- mean(db_s_list)
+  npurity_s_avg[jj] <- mean(npurity_s_list)
+  clisi_s_avg[jj] <- mean(clisi_s_list)
+  
+  print(paste("GCP", perp, "complete."))
+}
+
+# Visualization of metrics
+par(mfrow = c(1, 1), mar = c(5, 5, 4, 2), pty = "s", lwd = 2, cex = 1.3, asp = 1)
+
+plot_improved <- function(x, y, ylab, main_title) {
+  plot(x, y,
+       log = "x",
+       main = main_title,
+       xlab = "GCP",
+       ylab = ylab,
+       type = "l",
+       col = "black",
+       lwd = 2,
+       cex.lab = 1.4,
+       cex.main = 1.6,
+       cex.axis = 1.2
+  )
+  grid(col = "gray", lty = "dotted")
+  box(lwd = 2)
+}
+
+# Plot averaged metrics
+plot_improved(GCP, global_stability_avg, ylab = "KNN", main_title = paste(data.name, "- t-SNE Random Initialization: Averaged Global Stability"))
+plot_improved(GCP, concord_s_avg, ylab = "Concordance", main_title = paste(data.name, "- t-SNE Random Initialization: Averaged Concordance Score"))
+plot_improved(GCP, cor_s_avg, ylab = "Correlation", main_title = paste(data.name, "- t-SNE Random Initialization: Averaged Correlation Score"))
+plot_improved(GCP, db_s_avg, ylab = "Davies-Bouldin", main_title = paste(data.name, "- t-SNE Random Initialization: Averaged DB Index"))
+plot_improved(GCP, sil_s_avg, ylab = "Silhouette", main_title = paste(data.name, "- t-SNE Random Initialization: Averaged Silhouette Score"))
+plot_improved(GCP, npurity_s_avg, ylab = "Purity", main_title = paste(data.name, "- t-SNE Random Initialization: Averaged Normalized Purity"))
+plot_improved(GCP, clisi_s_avg, ylab = "cLISI", main_title = paste(data.name, "- t-SNE Random Initialization: Averaged Clustering LISI"))
+
+```
+
+#3 seeds: Generating UMAP result for multiple GCP
+```{r}
+# Generate UMAP results with multiple seeds and store runtimes
+seeds <- c(123, 234, 345)  # Define three different seeds
+runtime.list <- list()  # Initialize a list to store runtimes
+
+for (seed in seeds) {  # Loop over each seed
+  for (j in 1:length(GCP)) {  # Loop over each GCP value
+    perp <- GCP[j]
+    set.seed(seed)  # Set the current seed
+    knn.mat <- list()  # Initialize list for KNN matrices
+    
+    start_time <- Sys.time()  # Start timing
+    
+    for (i in 1:N) {  # Loop for stability testing
+      set.seed(seed + i)  # Use a slightly different seed for each iteration
+      out <- uwot::umap(data.denoise, n_neighbors = perp, init = "lvrandom", n_threads = 1, seed = seed + i)
+      knn.mat[[i]] <- findKmknn(out, k = 50)$index
+      print(c(i, j, seed))  # Print progress with seed information
+    }
+    
+    Y <- out  # Save the embedding
+    
+    end_time <- Sys.time()  # End timing
+    runtime <- end_time - start_time  # Calculate runtime
+    runtime.list[[paste("seed", seed, "perp", perp, sep = "_")]] <- runtime  # Store runtime in a labeled list
+    print(paste("Runtime for perplexity", perp, "with seed", seed, ":", runtime))
+    
+    # Save results with seed and GCP included in the file name
+    save(knn.mat, Y, file = paste0(data.name, "_umap_lvrandom_p", perp, "_pc", pc, "_seed", seed, "_knnMat_umap.RData"))
+  }
+}
+
+# Print all runtimes
+print(runtime.list)
+
+```
+```{r}
+# Define the seeds to be used
+seeds <- c(123, 234, 345)
+
+# Initialize variables to store averaged scores
+global_stability_avg <- numeric(length(GCP))
+concord_s_avg <- numeric(length(GCP))
+sil_s_avg <- numeric(length(GCP))
+cor_s_avg <- numeric(length(GCP))
+db_s_avg <- numeric(length(GCP))
+npurity_s_avg <- numeric(length(GCP))
+clisi_s_avg <- numeric(length(GCP))
+
+# Loop over GCP values
+for (jj in 1:length(GCP)) {
+  perp <- GCP[jj]
+  
+  # Initialize variables to store scores for all seeds
+  global_stability_list <- c()
+  concord_s_list <- c()
+  sil_s_list <- c()
+  cor_s_list <- c()
+  db_s_list <- c()
+  npurity_s_list <- c()
+  clisi_s_list <- c()
+  
+  # Loop over seeds
+  for (seed in seeds) {
+    set.seed(seed)
+    
+    # Load data for this GCP and seed
+    load(file.path(paste0(data.name, "_umap_lvrandom_p", perp, "_pc", pc, "_seed", seed, "_knnMat_umap.RData")))
+    k <- 50
+    
+    # Accumulate neighbor counts (construct knn graph)
+    knn.graph <- matrix(0, ncol = dim(knn.mat[[1]])[1], nrow = dim(knn.mat[[1]])[1])
+    for (i in 1:N) {
+      for (j in 1:dim(knn.mat[[1]])[1]) {
+        knn.graph[j, knn.mat[[i]][j, 1:k]] <- knn.graph[j, knn.mat[[i]][j, 1:k]] + 1
+      }
+      knn.graph <- pmax(knn.graph, t(knn.graph))  # Ensure symmetry
+    }
+    
+    # Compute KNN scores
+    knn.score <- sapply(1:dim(knn.mat[[1]])[1], function(i) {
+      quantile(knn.graph[i, which(knn.graph[i, ] != 0)] / N, 0.75)
+    })
+    global_stability_list <- c(global_stability_list, mean(knn.score))
+    
+    # Compute concordance
+    knn.h <- findKmknn(data.denoise, k = 100)$index
+    knn.l <- findKmknn(Y, k = 100)$index
+    concord.score <- sapply(1:dim(knn.h)[1], function(i) {
+      length(intersect(knn.h[i, 1:100], knn.l[i, 1:100])) / 100
+    })
+    concord_s_list <- c(concord_s_list, mean(concord.score))
+    
+    # Compute clustering metrics
+    sil_s_list <- c(sil_s_list, mean(silhouette(as.numeric(cls), dist(Y))[, 3], na.rm = TRUE))
+    cor_s_list <- c(cor_s_list, cor(dist(Y), dist(data.denoise), use = "complete.obs"))
+    db_s_list <- c(db_s_list, 1 / index.DB(Y, cl = as.numeric(cls))$DB)
+    
+    # Compute normalized purity
+    npurity_score <- neighborPurity(
+      x = Y,
+      clusters = as.numeric(cls),
+      k = 50,
+      weighted = TRUE,
+      BNPARAM = KmknnParam(),
+      BPPARAM = SerialParam()
+    )
+    npurity_s_list <- c(npurity_s_list, mean(npurity_score$purity, na.rm = TRUE))
+    
+    # Compute cLISI score
+    meta_data <- data.frame(cell_type = cls)
+    lisi_scores <- compute_lisi(Y, meta_data, c("cell_type"))
+    clisi_s_list <- c(clisi_s_list, mean(1 / lisi_scores$cell_type, na.rm = TRUE))
+  }
+  
+  # Average scores across seeds for this GCP
+  global_stability_avg[jj] <- mean(global_stability_list)
+  concord_s_avg[jj] <- mean(concord_s_list)
+  sil_s_avg[jj] <- mean(sil_s_list)
+  cor_s_avg[jj] <- mean(cor_s_list)
+  db_s_avg[jj] <- mean(db_s_list)
+  npurity_s_avg[jj] <- mean(npurity_s_list)
+  clisi_s_avg[jj] <- mean(clisi_s_list)
+  
+  print(paste("GCP", perp, "complete."))
+}
+
+# Visualization of metrics
+par(mfrow = c(1, 1), mar = c(5, 5, 4, 2), pty = "s", lwd = 2, cex = 1.3, asp = 1)
+
+plot_improved <- function(x, y, ylab, main_title) {
+  plot(x, y,
+       log = "x",
+       main = main_title,
+       xlab = "GCP",
+       ylab = ylab,
+       type = "l",
+       col = "black",
+       lwd = 2,
+       cex.lab = 1.4,
+       cex.main = 1.6,
+       cex.axis = 1.2
+  )
+  grid(col = "gray", lty = "dotted")
+  box(lwd = 2)
+}
+
+# Plot averaged metrics
+plot_improved(GCP, global_stability_avg, ylab = "KNN", main_title = paste(data.name, "- UMAP Random Initialization: Averaged Global Stability"))
+plot_improved(GCP, concord_s_avg, ylab = "Concordance", main_title = paste(data.name, "- UMAP Random Initialization: Averaged Concordance Score"))
+plot_improved(GCP, cor_s_avg, ylab = "Correlation", main_title = paste(data.name, "- UMAP Random Initialization: Averaged Correlation Score"))
+plot_improved(GCP, db_s_avg, ylab = "Davies-Bouldin", main_title = paste(data.name, "- UMAP Random Initialization: Averaged DB Index"))
+plot_improved(GCP, sil_s_avg, ylab = "Silhouette", main_title = paste(data.name, "- UMAP Random Initialization: Averaged Silhouette Score"))
+plot_improved(GCP, npurity_s_avg, ylab = "Purity", main_title = paste(data.name, "- UMAP Random Initialization: Averaged Normalized Purity"))
+plot_improved(GCP, clisi_s_avg, ylab = "cLISI", main_title = paste(data.name, "- UMAP Random Initialization: Averaged Clustering LISI"))
+
+```
+
+
+#Drawing stability and cell type plots for ONE GCP
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(lisi)
+
+GCP <- 30  # Set GCP value
+
+# Load the data for the specified GCP
+# load(file.path(paste0(data.name, "_umap_lvrandom_p", GCP, "_pc", pc, "_knnMat_umap.RData")))
+
+k <- 50
+N <- length(knn.mat)
+
+# Construct the KNN graph
+knn.graph <- matrix(0, ncol = dim(knn.mat[[1]])[1], nrow = dim(knn.mat[[1]])[1])
+for (i in 1:N) {
+  for (j in 1:dim(knn.mat[[1]])[1]) {
+    knn.graph[j, knn.mat[[i]][j, 1:k]] <- knn.graph[j, knn.mat[[i]][j, 1:k]] + 1
+  }
+  knn.graph <- pmax(knn.graph, t(knn.graph))  # Ensure symmetry
+}
+
+# Compute KNN scores
+knn.score <- c()
+for (i in 1:dim(knn.mat[[1]])[1]) {
+  knn.score[i] <- quantile(knn.graph[i, which(knn.graph[i, ] != 0)] / N, 0.75)
+}
+local_stability <- knn.score
+
+# Plot data
+plot.data <- data.frame(dim1 = Y[, 1], dim2 = Y[, 2], cell_type = cls)
+knn_plot_data <- data.frame(dim1 = Y[, 1], dim2 = Y[, 2], knn_score = knn.score)
+
+plot11 <- ggplot(plot.data, aes(dim1, dim2, colour = cell_type)) +
+  geom_point(size = 1) +
+  labs(title = paste(data.name, "- UMAP Initialization: Cell Types (GCP =", GCP, ")")) +
+  theme_minimal()
+
+plot22 <- ggplot(knn_plot_data, aes(dim1, dim2, colour = knn_score)) +
+  geom_point(size = 1) +
+  scale_colour_gradient(low = "blue", high = "red") +
+  labs(title = paste(data.name, "- UMAP Initialization: KNN Score (GCP =", GCP, ")")) +
+  theme_minimal()
+
+# Stability metrics
+global_stability <- mean(knn.score)
+temp.out <- matrix(ncol = N, nrow = N)
+for (i in 1:(N - 1)) {
+  for (j in (i + 1):N) {
+    temp <- c()
+    for (mn in 1:dim(knn.mat[[1]])[1]) {
+      temp[mn] <- length(intersect(knn.mat[[i]][mn, 1:k], knn.mat[[j]][mn, 1:k])) / k
+    }
+    temp.out[i, j] <- median(temp)
+  }
+}
+# stab.s <- mean(temp.out, na.rm = TRUE)
+
+# Concordance
+knn.h <- findKmknn(data.denoise, k = 100)$index
+knn.l <- findKmknn(Y, k = 100)$index
+concord.score <- c()
+for (i in 1:dim(knn.h)[1]) {
+  concord.score[i] <- length(intersect(knn.h[i, 1:100], knn.l[i, 1:100])) / 100
+}
+concord.s <- mean(concord.score)
+
+# Clustering metrics
+sil.s <- mean(silhouette(as.numeric(cls), dist(Y))[, 3])
+cor.s <- cor(dist(Y), dist(data.denoise))
+db.s <- 1 / index.DB(Y, cl = as.numeric(cls))$DB
+
+# Normalized Purity
+npurity_score <- neighborPurity(
+  x = Y,
+  clusters = as.numeric(cls),
+  k = 50,
+  weighted = TRUE,
+  BNPARAM = KmknnParam(),
+  BPPARAM = SerialParam()
+)
+npurity.s <- mean(npurity_score$purity, na.rm = TRUE)
+
+# Compute cLISI (Clustering LISI)
+meta_data <- data.frame(cell_type = cls)  # Metadata for LISI
+lisi_scores <- compute_lisi(Y, meta_data, c("cell_type"))
+clisi.s <- mean(lisi_scores$cell_type)
+
+clisi.s <- 1/ clisi.s
+
+# Print results
+print(list(
+  global_stability = global_stability,
+  concord.s = concord.s,
+  sil.s = sil.s,
+  cor.s = cor.s,
+  db.s = db.s,
+  npurity.s = npurity.s,
+  clisi.s = clisi.s  # Include cLISI in results
+))
+
+#local_stability
+```
+
+#store Y matrix for TSNE / UMAP result (adjust as needed)
+```{r}
+#load(file.path("mouse_hema_umap_lvrandom_p2_pc5_knnMat.RData"))
+write.csv(Y, "mouse_hema_umap_lvrandom_p2_pc5_Y_matrix.csv", row.names = TRUE)
+data2 <- as.data.frame(cls)
+write.csv(data2, "mouse_hema_cls.csv", row.names = TRUE)
+write.csv(data.denoise, "mouse_hema_data_denoise.csv", row.names = TRUE)
+```
+
+
+#density plot to check stability distribution for ALL cell types
+```{r}
+#define stable cell and unstable cell based on the user's need
+stable_cell <- which(cls %in% c("2", "7", "Enterocytes", "Enteroendocrine progenitors"))
+unstable_cell <- which(cls %in% c("TA cells", "Stem cells", "Enteroendocrine cells", "Goblet cells", "Paneth cells"))
+
+#stable_cell <- which(cls %in% c("2", "7", "Enterocytes", "Enteroendocrine progenitors", "Enteroendocrine cells", "Goblet cells", "TA cells"))
+#unstable_cell<- which(cls %in% c("Stem cells", "Paneth cells"))
+
+
+stable_cell_stability <- knn.score[stable_cell]
+unstable_cell_stability <- knn.score[unstable_cell]
+
+density_stable <- density(stable_cell_stability)
+density_unstable <- density(unstable_cell_stability)
+
+# Define the range for the Y-axis
+max_density <- max(c(density_stable$y, density_unstable$y))
+new_max_density <- max_density * 1.2  # Increase the maximum Y value by 20%
+
+# Set plotting area to be square
+par(pty = "s")
+
+# Plot the density of stable cells, suppressing x-axis labels initially
+plot(density_stable, col=rgb(1, 0, 0, 0.5),
+     xlim=c(min(c(stable_cell_stability, unstable_cell_stability)), max(c(stable_cell_stability, unstable_cell_stability))),
+     ylim=c(0, new_max_density),  # Apply new Y-axis limits
+     main="Stability Score Density for self-defined",
+     xlab="Stability Score",
+     ylab="Density",
+     lwd=2,
+     xaxt='n')  # Suppress default x-axis labels
+
+# Add the second density curve for unstable cells
+lines(density_unstable, col=rgb(0, 0, 1, 0.5), lwd=2)
+
+# Add the legend with smaller text size
+legend("topright", legend=c("Stable Cell Types", "Unstable Cell Types"),
+       col=c(rgb(1, 0, 0, 0.5), rgb(0, 0, 1, 0.5)), lwd=2, cex=0.8)
+
+# Add custom x-axis with increments of 0.2
+axis(1, at=seq(0, 1, by=0.2), labels=seq(0, 1, by=0.2))  # Add tick marks with labels
+```
+
+#bar plot to check stability distribution for ALL cell types
+```{r}
+# Extract stability scores for stable and unstable cells
+stable_cell_stability <- knn.score[stable_cell]
+unstable_cell_stability <- knn.score[unstable_cell]
+
+# Calculate density estimates for stable and unstable cells
+density_stable <- density(stable_cell_stability)
+density_unstable <- density(unstable_cell_stability)
+
+# Define the range for the Y-axis, considering both density and histogram counts
+hist_stable <- hist(stable_cell_stability, plot = FALSE)
+hist_unstable <- hist(unstable_cell_stability, plot = FALSE)
+
+max_density <- max(c(density_stable$y, density_unstable$y))
+max_count <- max(c(hist_stable$counts, hist_unstable$counts))
+new_max_density <- max(c(max_density, max_count)) * 1.2  # Increase the maximum Y value by 20%
+
+# Set plotting area to be square
+par(pty = "s")
+
+# Plot the histogram of stable cells with actual values on the y-axis
+hist(stable_cell_stability, col=rgb(1, 0, 0, 0.5), 
+     xlim=c(min(c(stable_cell_stability, unstable_cell_stability)), max(c(stable_cell_stability, unstable_cell_stability))),
+     ylim=c(0, new_max_density),  # Apply new Y-axis limits
+     main="Stability Score Density for Self-Defined Cell Types",
+     xlab="Stability Score",
+     ylab="Count/Density",
+     border="white",
+     freq=TRUE)  # Use actual counts on the y-axis
+
+# Overlay the histogram of unstable cells
+hist(unstable_cell_stability, col=rgb(0, 0, 1, 0.5), add=TRUE, border="white", freq=TRUE)
+
+# Add the density curve for stable cells
+lines(density_stable, col=rgb(1, 0, 0, 0.8), lwd=2)
+
+# Add the density curve for unstable cells
+lines(density_unstable, col=rgb(0, 0, 1, 0.8), lwd=2)
+
+# Add the legend with smaller text size
+legend("topright", legend=c("Stable Cell Types (Histogram)", "Unstable Cell Types (Histogram)", 
+                            "Stable Cell Types (Density)", "Unstable Cell Types (Density)"),
+       col=c(rgb(1, 0, 0, 0.5), rgb(0, 0, 1, 0.5), rgb(1, 0, 0, 0.8), rgb(0, 0, 1, 0.8)), 
+       lwd=c(NA, NA, 2, 2), pch=c(15, 15, NA, NA), cex=0.8)
+
+# Add custom x-axis with increments of 0.2
+axis(1, at=seq(0, 1, by=0.2), labels=seq(0, 1, by=0.2))  # Add tick marks with labels
+
+```
+
+# Murine Intestinal Data ONLY: bar plot to check stability distribution for ALL cell types
+```{r}
+entropy_indices <- read.csv("intestinal_processed_entropy_values.csv", header = TRUE, stringsAsFactors = FALSE)
+
+# Ensure the category column is treated as a factor
+entropy_indices$category <- as.factor(entropy_indices$category)
+
+# Get indices for each category
+category_indices <- split(seq_len(nrow(entropy_indices)), entropy_indices$category)
+
+# Print indices for each category
+print(category_indices)
+
+# Assuming 'local_stability' is a vector of doubles corresponding to all data points
+# and 'category_indices' is the list of indices for the 5 categories from the previous step.
+
+# Create a data frame to organize local stability and category labels
+boxplot_data <- data.frame(
+  local_stability = numeric(),
+  category = factor()
+)
+
+# Iterate through the categories and bind data
+for (i in 1:5) {
+  indices <- category_indices[[as.character(i)]]  # Get indices for category i
+  scores <- local_stability[indices]             # Extract local stability scores for these indices
+  
+  # Append to boxplot_data
+  boxplot_data <- rbind(
+    boxplot_data,
+    data.frame(local_stability = scores, category = as.factor(i))
+  )
+}
+
+# Plot the boxplot using ggplot2
+library(ggplot2)
+ggplot(boxplot_data, aes(x = category, y = local_stability, fill = category)) +
+  geom_boxplot() +
+  labs(title = "Local Stability Scores by Category",
+       x = "Category",
+       y = "Local Stability Score") +
+  theme_minimal()
+
+```
+
+
+#compare results using different metrics(euclidean, cosine....)
+```{r}
+library(uwot)
+
+# Define the list of distance metrics to iterate over
+metric_list <- c("euclidean", "cosine", "manhattan", "hamming", "correlation") 
+
+
+GCP_value <- 30 
+
+for (metric_type in metric_list) {
+    set.seed(123)
+    knn.mat = list()  
+    
+    for (i in 1:N) {  
+        set.seed(123 + i)  
+        out = uwot::umap(data.denoise, 
+                         n_neighbors = GCP_value, 
+                         metric = metric_type,
+                         init = "lvrandom", 
+                         n_threads = 1, 
+                         seed = 123 + i)
+        
+
+        knn.mat[[i]] = findKmknn(out, k = 50)$index
+        print(paste("Iteration:", i, "Metric:", metric_type))
+    } 
+
+    Y = out  
+
+    save(knn.mat, Y, file = paste0("matrix_", metric_type, "_", data.name, "_umap_lvrandom_", "_p", GCP_value, "_pc", pc, "_knnMat_umap.RData"))
+}
+
+```
+```{r}
+library(ggplot2)
+
+local_stability <- c()
+global_stability <- c()
+
+for (jj in seq_along(metric_list)) {
+  metric_type <- metric_list[jj]
+  
+  # Load UMAP-related data
+  load(file.path(paste0("matrix_", metric_type, "_", data.name, "_umap_lvrandom_", "_p", GCP_value, "_pc", pc, "_knnMat_umap.RData")))
+  k <- 50
+  
+  # Accumulate neighbor counts (construct KNN graph)
+  knn.graph <- matrix(0, ncol = dim(knn.mat[[1]])[1], nrow = dim(knn.mat[[1]])[1])
+  for (i in 1:N) {
+    for (j in 1:dim(knn.mat[[1]])[1]) {
+      knn.graph[j, knn.mat[[i]][j, 1:k]] <- knn.graph[j, knn.mat[[i]][j, 1:k]] + 1
+    }
+    knn.graph <- pmax(knn.graph, t(knn.graph))  # Ensure A -> B implies B -> A
+  }
+  
+  # Compute KNN scores
+  knn.score <- c()
+  for (i in 1:dim(knn.mat[[1]])[1]) {
+    knn.score[i] <- quantile(knn.graph[i, which(knn.graph[i, ] != 0)] / N, 0.75)
+  }
+  local_stability[[jj]] <- knn.score
+  
+  # Plot data by cell type
+  plot.data <- data.frame(dim1 = Y[, 1], dim2 = Y[, 2], cell_type = cls)
+  plot11 <- ggplot(plot.data, aes(dim1, dim2, colour = cell_type)) +
+    geom_point(size = 1)
+  
+  # Plot data by KNN score
+  plot.data <- data.frame(dim1 = Y[, 1], dim2 = Y[, 2], knn_score = knn.score)
+  plot22 <- ggplot(plot.data, aes(dim1, dim2, colour = knn_score)) +
+    geom_point(size = 1)
+  
+  # Save plots
+  ggsave(filename = paste0("matrix_", metric_type, "_", data.name, "_umap_lvrandom_", "_p", GCP_value, "_pc", pc, "_cls.png"), plot = plot11, width = 8, height = 7, units = "in")
+  ggsave(filename = paste0("matrix_", metric_type, "_", data.name, "_umap_lvrandom_", "_p", GCP_value, "_pc", pc,"_score.png"), plot = plot22, width = 8, height = 7, units = "in")
+  
+  # Compute stability score
+  global_stability[jj] <- mean(knn.score)
+  
+}
+
+
+```
+```{r}
+# generating barplot for global stability
+library(ggplot2)
+
+# Create a data frame
+df <- data.frame(
+  Metric = c("euclidean", "cosine", "manhattan", "hamming", "correlation"),
+  Stability = global_stability
+)
+
+# Generate the bar plot with adjusted y-axis range
+ggplot(df, aes(x = Metric, y = Stability, fill = Metric)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Global Stability for Different Metrics",
+       x = "Distance Metric",
+       y = "Global Stability") +
+  scale_fill_manual(values = c("euclidean" = "blue", "cosine" = "red",  "manhattan" = "grey", "hamming" = "black", "correlation" = "purple")) +
+  theme(legend.position = "none") +
+  coord_cartesian(ylim = c(0.6, 0.95))  # Adjusting the y-axis range for better visibility
+
+
+```
+```{r}
+# generating boxplot for local stability
+library(ggplot2)
+
+# Define metric names
+metrics <- c("euclidean", "cosine", "manhattan", "hamming", "correlation")
+
+# Convert local_stability (list of lists) into a data frame
+df <- data.frame(
+  Metric = rep(metrics, each = length(local_stability[[1]])),  # Repeat each metric 3452 times
+  Stability = unlist(local_stability)  # Flatten the list into a single vector
+)
+
+# Convert global_stability into a data frame
+global_df <- data.frame(
+  Metric = metrics,  # Each metric has one global stability score
+  Stability = global_stability  # The corresponding global stability score
+)
+
+# Reorder Metric based on descending global stability score
+df$Metric <- factor(df$Metric, levels = global_df$Metric[order(-global_df$Stability)])
+global_df$Metric <- factor(global_df$Metric, levels = global_df$Metric[order(-global_df$Stability)])
+
+# Generate the box plot with overlaid points
+ggplot(df, aes(x = Metric, y = Stability, fill = Metric)) +   
+  geom_boxplot(outlier.shape = 16, outlier.size = 2, outlier.color = "black", coef = 0) +  # Ensure only outliers appear as points
+  geom_point(data = global_df, aes(x = Metric, y = Stability), color = "red", size = 3) +  # Add global stability as points
+  labs(title = "Local & Global Stability for Different Metrics (Ordered by Global Stability)",        
+       x = "Distance Metric",        
+       y = "Stability") +       
+  scale_fill_manual(values = c("euclidean" = "grey",   
+                               "cosine" = "green",   
+                               "manhattan" = "blue",   
+                               "hamming" = "#505050",   
+                               "correlation" = "#A633FF")) 
+
+
+
+
+
+  #scale_fill_manual(values = c("euclidean" = "blue", "cosine" = "#D3D3D3", "manhattan" = "#505050", "hamming" = "black", "correlation" = "purple")) 
+```
+
+#compare results using different methods with same metrics (t-SNE, umap, phateR)
+```{r}
+# Define the list of methods to iterate over
+method_list <- c("tSNE", "UMAP", "PhateR")
+
+# For UMAP, use a single GCP value; for tSNE and PhateR, use a vector of GCP values
+GCP_value <- 30      # for UMAP
+N <- 30              # number of iterations
+
+for (method_type in method_list) {
+  
+  if (method_type == "UMAP") {
+    set.seed(123)
+    knn.mat <- list()
+    for (i in 1:N) {
+      set.seed(123 + i)
+      out <- uwot::umap(data.denoise,
+                        n_neighbors = GCP_value,
+                        init = "lvrandom",
+                        n_threads = 1,
+                        seed = 123 + i)
+      knn.mat[[i]] <- findKmknn(out, k = 50)$index
+      print(paste("Iteration:", i, "Method:", method_type))
+    }
+    Y <- out
+    save(knn.mat, Y, file = paste0("3.3_", data.name, "_umap_lvrandom_p", GCP_value, "_knnMat_umap.RData"))
+    
+  } else if (method_type == "tSNE") {
+      perp <- GCP_value
+      set.seed(123)
+      knn.mat <- list()
+      for (i in 1:N) {
+        set.seed(123 + i)
+        out <- Rtsne(data.denoise, perplexity = perp, check_duplicates = FALSE, pca = FALSE, seed = 123)
+        knn.mat[[i]] <- findKmknn(out$Y, k = 50)$index
+        print(paste("Iteration:", i, "Method:", method_type, "Perp:", perp))
+      }
+      Y <- out$Y
+      save(knn.mat, Y, file = paste0("3.3_", data.name, "_tsne_random_p", perp,"_knnMat.RData"))
+    
+  } else if (method_type == "PhateR") {
+      knn_value <- GCP_value
+      set.seed(123)
+      knn.mat <- list()
+      for (i in 1:N) {
+        set.seed(123 + i)
+        out <- phate(data.denoise, 
+                     ndim = 2,
+                     knn = knn_value,
+                     seed = 123 + i,
+                     verbose = TRUE)
+        knn.mat[[i]] <- findKmknn(out$embedding, k = 50)$index
+        print(paste("Iteration:", i, "Method:", method_type, "GCP Index:", j))
+      }
+      Y <- out$embedding
+      save(knn.mat, Y, file = paste0("3.3_", data.name, "_phate_random_knn", knn_value, ".RData"))
+  }
+}
+
+```
+```{r}
+# Define the list of methods to iterate over
+method_list <- c("tSNE", "UMAP", "PhateR")
+N <- 30               # Number of iterations
+GCP_value <- 30       # Using same value for all methods for simplicity
+
+# Initialize lists for storing local and global stability scores
+local_stability <- list()
+global_stability <- numeric(length(method_list))
+
+# Loop over each method
+for (jj in seq_along(method_list)) {
+    method_type <- method_list[jj]
+    
+    # Construct the filename based on method type
+    if (method_type == "UMAP") {
+       file_name <- paste0("3.3_", data.name, "_umap_lvrandom_p", GCP_value, "_knnMat_umap.RData")
+    } else if (method_type == "tSNE") {
+       file_name <- paste0("3.3_", data.name, "_tsne_random_p", GCP_value, "_knnMat.RData")
+    } else if (method_type == "PhateR") {
+       file_name <- paste0("3.3_", data.name, "_phate_random_knn", GCP_value, ".RData")
+    }
+    
+    # Load the corresponding file; assume that Y, knn.mat, and cls are loaded from the file
+    load(file.path(file_name))
+    
+    k <- 50  # Number of nearest neighbors for stability computation
+    
+    # Construct the KNN graph
+    knn.graph <- matrix(0, ncol = nrow(knn.mat[[1]]), nrow = nrow(knn.mat[[1]]))
+    for (i in 1:N) {
+        for (j in 1:nrow(knn.mat[[1]])) {
+            knn.graph[j, knn.mat[[i]][j, 1:k]] <- knn.graph[j, knn.mat[[i]][j, 1:k]] + 1
+        }
+        knn.graph <- pmax(knn.graph, t(knn.graph))  # Ensure symmetry: if A is neighbor of B, then B is neighbor of A
+    }
+    
+    # Compute KNN scores (local stability) for each cell
+    knn.score <- numeric(nrow(knn.mat[[1]]))
+    for (i in 1:nrow(knn.mat[[1]])) {
+        knn.score[i] <- quantile(knn.graph[i, knn.graph[i, ] != 0] / N, 0.75)
+    }
+    local_stability[[jj]] <- knn.score
+    
+    # Compute global stability for the method as the mean of local stability scores
+    global_stability[jj] <- mean(knn.score)
+    
+    # Plotting: Create t-SNE or equivalent plots colored by cell type and by knn score
+    plot.data <- data.frame(dim1 = Y[,1], dim2 = Y[,2], cell_type = cls)
+    plot11 <- ggplot(plot.data, aes(x = dim1, y = dim2, colour = cell_type)) +
+        geom_point(size = 1) +
+        ggtitle(paste(data.name, method_type, "Cell Type"))
+        
+    plot.data2 <- data.frame(dim1 = Y[,1], dim2 = Y[,2], knn_score = knn.score)
+    plot22 <- ggplot(plot.data2, aes(x = dim1, y = dim2, colour = knn_score)) +
+        geom_point(size = 1) +
+        ggtitle(paste(data.name, method_type, "KNN Score"))
+    
+    # Save the plots for each method
+    ggsave(filename = paste0("3.3_", data.name, "_", method_type, "_cls.png"), plot = plot11, width = 8, height = 7, units = "in")
+    ggsave(filename = paste0("3.3_", data.name, "_", method_type, "_score.png"), plot = plot22, width = 8, height = 7, units = "in")
+}
+
+# ----- Plotting Stability Scores Across Methods -----
+library(ggplot2)
+
+# Create a data frame from the local_stability list
+methods <- method_list  # "tSNE", "UMAP", "PhateR"
+df <- data.frame(
+    Method = rep(methods, each = length(local_stability[[1]])),
+    Stability = unlist(local_stability)
+)
+
+# Create a data frame for global stability
+global_df <- data.frame(
+    Method = methods,
+    Stability = global_stability
+)
+
+# Reorder the methods based on descending global stability
+df$Method <- factor(df$Method, levels = global_df$Method[order(-global_df$Stability)])
+global_df$Method <- factor(global_df$Method, levels = global_df$Method[order(-global_df$Stability)])
+
+# Generate a box plot with overlaid global stability points
+ggplot(df, aes(x = Method, y = Stability, fill = Method)) +
+    geom_boxplot(outlier.shape = 16, outlier.size = 2, outlier.color = "black", coef = 0) +
+    geom_point(data = global_df, aes(x = Method, y = Stability), color = "red", size = 3) +
+    labs(title = "Local & Global Stability for Different Methods (Ordered by Global Stability)",
+         x = "Method",
+         y = "Stability") +
+    scale_fill_manual(values = c("tSNE" = "grey", "UMAP" = "green", "PhateR" = "blue"))
+
+
+```
+
+# IPSC data ONLY: specifically for tsne random GCP=30: exclude day after day 2.5
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(lisi)
+
+# Compute knn.graph, knn.score, and filter based on thresholds
+knn.graph <- matrix(0, ncol = dim(knn.mat[[1]])[1], nrow = dim(knn.mat[[1]])[1])
+for (i in 1:N) {
+  for (j in 1:dim(knn.mat[[1]])[1]) {
+    knn.graph[j, knn.mat[[i]][j, 1:k]] <- knn.graph[j, knn.mat[[i]][j, 1:k]] + 1
+  }
+  knn.graph <- pmax(knn.graph, t(knn.graph))  # Ensure symmetry
+}
+
+# Calculate knn scores
+knn.score <- sapply(1:dim(knn.mat[[1]])[1], function(i) {
+  quantile(knn.graph[i, knn.graph[i, ] != 0] / N, 0.75)
+})
+threshold <- quantile(knn.score, counting / 50)
+indices_to_keep <- which(knn.score > threshold)
+
+# Filter datasets
+filtered_knn.graph <- knn.graph[indices_to_keep, indices_to_keep]
+new_Y <- Y[indices_to_keep, ]
+filtered_df <- data.denoise[indices_to_keep, ]
+filtered_cls <- as.data.frame(cls)[indices_to_keep, ]
+
+# Update knn matrices
+new_df <- lapply(knn.mat, function(mat) mat[indices_to_keep, ])
+knn.score <- knn.score[indices_to_keep]
+local_stability[[counting]] <- knn.score
+
+# Plot filtered results
+plot.data <- data.frame(dim1 = new_Y[, 1], dim2 = new_Y[, 2], cell_type = filtered_cls)
+plot11 <- ggplot(plot.data, aes(dim1, dim2, colour = cell_type)) +
+  geom_point(size = 1) +
+  ggtitle(paste0(data.name, "_p", perp, "_pc", pc))
+print(plot11)
+
+plot.data <- data.frame(dim1 = new_Y[, 1], dim2 = new_Y[, 2], knn_score = knn.score)
+plot22 <- ggplot(plot.data, aes(dim1, dim2, colour = knn_score)) +
+  geom_point(size = 1) +
+  scale_colour_gradient(limits = c(0, 1)) +
+  ggtitle(paste0(data.name, "_p", perp, "_pc", pc))
+print(plot22)
+
+# Save plots
+ggsave(filename = paste0("specific_cell_type_", counting / 50, data.name, "_tsne_random_p", perp, "_pc", pc, "_cls.png"), plot = plot11, width = 8, height = 7, units = "in")
+ggsave(filename = paste0("specific_cell_type_", counting / 50, data.name, "_tsne_random_p", perp, "_pc", pc, "_score.png"), plot = plot22, width = 8, height = 7, units = "in")
+
+# Update stability metrics
+global_stability[counting] <- mean(knn.score)
+
+# Compute concordance
+knn.h <- findKmknn(filtered_df, k = 100)$index
+knn.l <- findKmknn(new_Y, k = 100)$index
+concord.score <- sapply(1:dim(knn.h)[1], function(i) {
+  length(intersect(knn.h[i, 1:100], knn.l[i, 1:100])) / 100
+})
+concord.s[counting] <- mean(concord.score)
+
+# Compute silhouette score
+sil.s[counting] <- mean(silhouette(as.numeric(filtered_cls), dist(new_Y))[, 3])
+
+# Compute Davies-Bouldin index
+db.s[counting] <- 1 / index.DB(new_Y, cl = as.numeric(filtered_cls))$DB
+
+# Compute neighborhood purity
+npurity_score <- neighborPurity(
+  x = new_Y,
+  clusters = as.numeric(filtered_cls),
+  k = 50,
+  weighted = TRUE,
+  BNPARAM = KmknnParam(),
+  BPPARAM = SerialParam()
+)
+npurity.s[counting] <- mean(npurity_score$purity, na.rm = TRUE)
+
+# Compute Clustering LISI (cLISI)
+meta_data <- data.frame(cell_type = filtered_cls)  # Create metadata for LISI
+lisi_scores <- compute_lisi(new_Y, meta_data, c("cell_type"))
+clisi.s <- mean(lisi_scores$cell_type)
+
+clisi.s <- 1/ clisi.s
+
+# Print metrics
+print(list(
+  global_stability = global_stability[counting],
+  concord.s = concord.s[counting],
+  sil.s = sil.s[counting],
+  db.s = db.s[counting],
+  npurity.s = npurity.s[counting],
+  clisi.s = clisi.s  # Include cLISI score
+))
+
+local_stability
+
+```
+
+
+#for Embryoid Body data: check runtime for different number of subsamples
+```{r}
+library(ggplot2)
+library(lisi)
+
+# Define the sample sizes you want to use
+sample_sizes <- seq(1000, 29000, by = 2000)
+N <- 30
+
+# Create an empty dataframe to store the results
+results <- data.frame(
+  sample_size = integer(),
+  global_stability = numeric(),
+  concord_s = numeric(),
+  sil_s = numeric(),
+  cor_s = numeric(),
+  db_s = numeric(),
+  npurity_s = numeric(),
+  clisi_s = numeric(), # Add column for cLISI score
+  runtime = numeric()
+)
+
+perp <- 50
+load(file.path(paste0(data.name, "_umap_lvrandom_p", perp, "_pc", pc, "_knnMat_umap.RData")))
+
+for (n in sample_sizes) {
+  # Randomly select n data points from data.denoise and cls
+  set.seed(123)  # Set a seed for reproducibility
+  sample_indices <- sample(1:nrow(data.denoise), n)
+  data_sample <- data.denoise[sample_indices, ]
+  Y_sample <- Y[sample_indices, ]
+  cls_sample <- unlist(cls[sample_indices])
+
+  # Filter knn.mat to only include the selected indices
+  knn.mat_filtered <- lapply(knn.mat, function(mat) {
+    mat_filtered <- mat[sample_indices, ]
+    mat_filtered_list <- lapply(1:nrow(mat_filtered), function(i) {
+      neighbors <- mat_filtered[i, ]
+      valid_neighbors <- neighbors[neighbors %in% sample_indices]
+      if (length(valid_neighbors) < k) {
+        valid_neighbors <- c(valid_neighbors, rep(NA, k - length(valid_neighbors)))
+      }
+      return(valid_neighbors)
+    })
+    do.call(rbind, mat_filtered_list)
+  })
+
+  # Start measuring the runtime
+  start_time <- Sys.time()
+
+  # UMAP stability evaluation
+  global_stability <- 0
+  concord.s <- 0
+  sil.s <- 0
+  cor.s <- 0
+  db.s <- 0
+  npurity.s <- 0
+  clisi.s <- 0 # Initialize cLISI score
+
+  k <- 50
+
+  # Accumulate neighbor counts (construct knn graph)
+  num_filtered <- length(sample_indices)
+  knn.graph <- matrix(0, ncol = num_filtered, nrow = num_filtered)
+  subset_mapping <- setNames(seq_along(sample_indices), sample_indices)
+
+  for (i in 1:N) {
+    for (j in 1:nrow(knn.mat_filtered[[1]])) {
+      neighbors <- knn.mat_filtered[[i]][j, ]
+      valid_neighbors <- subset_mapping[neighbors[!is.na(neighbors)]]
+      valid_neighbors <- valid_neighbors[!is.na(valid_neighbors)]  # Remove any NA values
+      knn.graph[j, valid_neighbors] <- knn.graph[j, valid_neighbors] + 1
+    }
+    knn.graph <- pmax(knn.graph, t(knn.graph)) # Ensure if point A is a neighbor of B, B is also a neighbor of A
+  }
+
+  knn.score <- sapply(1:nrow(knn.graph), function(i) {
+    non_zero_neighbors <- which(knn.graph[i, ] != 0)
+    if (length(non_zero_neighbors) > 0) {
+      quantile(knn.graph[i, non_zero_neighbors] / N, 0.75)
+    } else {
+      NA
+    }
+  })
+
+  global_stability <- mean(knn.score, na.rm = TRUE)
+
+  # Concordance
+  knn.h <- findKmknn(data_sample, k = 100)$index
+  knn.l <- findKmknn(Y_sample, k = 100)$index
+  concord.score <- sapply(1:nrow(knn.h), function(i) {
+    length(intersect(knn.h[i, 1:100], knn.l[i, 1:100])) / 100
+  })
+  concord.s <- mean(concord.score)
+
+  # Silhouette score
+  sil.s <- mean(silhouette(as.numeric(cls_sample), dist(Y_sample))[, 3])
+
+  # Correlation
+  cor.s <- cor(dist(Y_sample), dist(data_sample))
+
+  # Davies-Bouldin index
+  db.s <- 1 / index.DB(Y_sample, cl = as.numeric(cls_sample))$DB
+
+  # Neighborhood Purity
+  npurity_score <- neighborPurity(
+    x = Y_sample,
+    clusters = as.numeric(cls_sample),
+    k = 50,
+    weighted = TRUE,
+    BNPARAM = KmknnParam(),
+    BPPARAM = SerialParam()
+  )
+  npurity.s <- mean(npurity_score$purity, na.rm = TRUE)
+
+  # Compute Clustering LISI (cLISI)
+  meta_data <- data.frame(cell_type = cls_sample)  # Metadata for LISI
+  lisi_scores <- compute_lisi(Y_sample, meta_data, c("cell_type"))
+  clisi.s <- mean(lisi_scores$cell_type)
+  
+  clisi.s <- 1/ clisi.s
+
+  # End measuring the runtime
+  end_time <- Sys.time()
+  runtime <- as.numeric(difftime(end_time, start_time, units = "secs"))
+
+  # Store the results in the dataframe
+  results <- rbind(results, data.frame(
+    sample_size = n,
+    global_stability = global_stability,
+    concord_s = concord.s,
+    sil_s = sil.s,
+    cor_s = cor.s,
+    db_s = db.s,
+    npurity_s = npurity.s,
+    clisi_s = clisi.s, # Store cLISI score
+    runtime = runtime
+  ))
+
+  print(n)
+}
+
+# Print the results
+table(results)
+
+# Optionally, save the results to a CSV file
+# write.csv(results, file = "umap_stability_results.csv", row.names = FALSE)
+
+# Set graphical parameters
+par(mfrow = c(1, 1), mar = c(5, 5, 4, 2), pty = "s", lwd = 2, cex = 1.3)
+
+# Define a function to create consistent, improved plots
+plot_improved <- function(x, y, xlab, ylab, main_title) {
+  plot(x, y,
+       log = "x",
+       main = main_title,
+       xlab = xlab,
+       ylab = ylab,
+       type = "l", # Use lines instead of points
+       col = "black", # Line color
+       lwd = 2, # Line width
+       cex.lab = 1.4, # Larger axis labels
+       cex.main = 1.6, # Larger main title
+       cex.axis = 1.2 # Larger axis tick labels
+  )
+  grid(col = "gray", lty = "dotted") # Add a dotted grid for better readability
+  box(lwd = 2) # Thicker border around the plot
+}
+
+# Call the plot_improved function with the correct arguments
+plot_improved(
+  results$sample_size,
+  results$runtime,
+  xlab = "Sample Size",
+  ylab = "Runtime",
+  main_title = "UMAP Stability Analysis Runtime vs Sample Size"
+)
+
+```
+
+```{r}
+# Define the two lists as character vectors
+umap <- c("1.028652 mins", "1.164407 mins", "1.26427 mins", "1.338042 mins", "1.403278 mins", 
+          "1.468873 mins", "1.516458 mins", "1.573959 mins", "1.613065 mins", "1.71004 mins", 
+          "1.808295 mins", "1.956322 mins", "2.068717 mins", "2.144257 mins", "2.296799 mins", 
+          "2.436887 mins", "2.707285 mins", "2.861185 mins", "3.103325 mins", "3.272104 mins", 
+          "3.445679 mins", "3.788295 mins", "3.810932 mins", "2.770011 mins", "3.322586 mins")
+
+umap_ret_nn <- c("1.003748 mins", "1.020077 mins", "58.26229 secs", "1.028586 mins", 
+                 "1.053027 mins", "1.065817 mins", "1.04447 mins", "1.042911 mins", 
+                 "1.043769 mins", "1.035877 mins", "59.52673 secs", "1.027963 mins", 
+                 "1.033774 mins", "1.034878 mins", "1.036926 mins", "1.022605 mins", 
+                 "1.020706 mins", "1.026838 mins", "1.017059 mins", "1.007681 mins", 
+                 "1.015296 mins", "1.040486 mins", "1.045455 mins", "1.039088 mins", 
+                 "1.021616 mins")
+
+# Convert time strings to numeric values in minutes
+convert_to_minutes <- function(time_str) {
+  if (grepl("secs", time_str)) {
+    return(as.numeric(sub(" secs", "", time_str)) / 60) # Convert seconds to minutes
+  } else {
+    return(as.numeric(sub(" mins", "", time_str))) # Keep minutes as they are
+  }
+}
+
+umap_numeric <- as.data.frame(sapply(umap, convert_to_minutes))
+umap_ret_nn_numeric <- as.data.frame(sapply(umap_ret_nn, convert_to_minutes))
+
+combined_runtime <- as.data.frame(cbind(umap_numeric$`sapply(umap, convert_to_minutes)`,umap_ret_nn_numeric$`sapply(umap_ret_nn, convert_to_minutes)`))
+combined_runtime
+
+# Set graphical parameters for a clean, consistent plot with extra margin for the legend
+par(mfrow = c(1, 1), mar = c(5, 5, 4, 8), lwd = 2, cex = 1.3)
+
+# Create the plot for V1 with indices on the x-axis
+plot(1:nrow(combined_runtime), combined_runtime$V1,
+     type = "l", # Use lines for the plot
+     xlab = "Index",
+     ylab = "Runtime (minutes)",
+     col = "blue", # Color of V1 line
+     lwd = 2, # Line width
+     ylim = c(0, 5), # Set y-axis limits from 0 to 5
+     main = "Runtime Comparison"
+)
+
+# Add the line for V2 to the plot
+lines(1:nrow(combined_runtime), combined_runtime$V2,
+      type = "l",
+      col = "red", # Color of V2 line
+      lwd = 2)
+
+# Add a legend outside of the plot area on the right side
+legend("topright", inset = c(-0.55, 0), legend = c("old runtime", "new runtime"), 
+       col = c("blue", "red"), lty = 1, lwd = 2, xpd = TRUE, bty = "n")
+
+```
+
+# violin plot and box plot for stability against cell types
+```{r}
+library(ggplot2)
+library(dplyr)
+
+# Create a data frame for plotting
+plot_data <- data.frame(
+  knn_score = knn.score,
+  cell_type = cls
+)
+
+plot_data$cell_type <- as.factor(plot_data$cell_type)
+
+# Box plot for knn.score grouped by cell_type
+ggplot(plot_data, aes(x = cell_type, y = knn_score, fill = cell_type)) +
+  geom_boxplot() +
+  labs(
+    title = paste(data.name, "- KNN Score by Cell Type (Box Plot)"),
+    x = "Cell Type",
+    y = "KNN Score"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 8)  # Rotate x-axis labels and adjust font size
+  )
+```
+```{r}
+# Violin plot for knn.score grouped by cell_type
+ggplot(plot_data, aes(x = cell_type, y = knn_score, fill = cell_type)) +
+  geom_violin(trim = FALSE) +
+  labs(
+    title = paste(data.name, "- KNN Score by Cell Type (Violin Plot)"),
+    x = "Cell Type",
+    y = "KNN Score"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 8)  # Rotate x-axis labels and adjust font size
+  )
+
+```
+
+#Embryoid body data ONLY: draw boxplot for EMBEDR and cell type distribution
+```{r}
+#read embryoid_body_EMBEDR_EES_score.csv
+
+# Select relevant columns starting from the 3rd column onward
+final_ees_df <- embryoid_body_EMBEDR_EES_score[, 3:ncol(embryoid_body_EMBEDR_EES_score)]
+
+# Convert cell_type to a factor
+final_ees_df$cell_type <- as.factor(final_ees_df$cell_type)
+
+print(final_ees_df)
+
+# Sort cell types by the median of Inverse_Score
+sorted_cell_types <- final_ees_df %>%
+  group_by(cell_type) %>%
+  summarise(median_score = median(Inverse_Score, na.rm = TRUE)) %>%
+  arrange(desc(median_score))
+
+# Print sorted cell types
+print(sorted_cell_types)
+
+# Reorder cell_type in final_ees_df based on sorted_cell_types
+final_ees_df <- final_ees_df %>%
+  mutate(cell_type = factor(cell_type, levels = sorted_cell_types$cell_type))
+
+# Create the box plot using the reordered cell_type
+ggplot(final_ees_df, aes(x = cell_type, y = Inverse_Score, fill = cell_type)) +
+  geom_boxplot() +
+  labs(
+    title = paste(data.name, "- KNN Score by Cell Type (Box Plot)"),
+    x = "Cell Type",
+    y = "KNN Score"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 8)  # Rotate x-axis labels and adjust font size
+  )
+
+
+```
+
+
+
+
+#improved code for tsne and umap generation using ret_nn
+```{r}
+set.seed(123)  # Set initial seed to control randomness globally
+knn.info <- NULL  # Variable to store nearest neighbor info for reuse
+runtime.list <- list()
+
+sample_sizes <- seq(1000, 29000, by = 2000)
+
+for (j in sample_sizes) {
+  perp <- 100
+  knn.mat <- list() 
+
+  # Set seed to make sampling reproducible
+  set.seed(123 + j)  # Use a different seed for each sample size to maintain variation
+  sample_indices <- sample(1:nrow(data.denoise), j)
+  data_sample <- data.denoise[sample_indices, ]
+
+  # Reset knn.info to NULL because the sample size is different
+  knn.info <- NULL
+
+  # Timing for reproducibility
+  start_time <- Sys.time()
+
+  for (i in seq_len(N)) {
+    # Set seed to ensure reproducibility of UMAP results
+    set.seed(123 + j + i)  # Vary seed by both sample size and iteration to ensure consistent results
+
+    # Use precomputed nearest neighbor information if available, otherwise compute it
+    if (is.null(knn.info)) {
+      # First run - compute NN and get UMAP result
+      out <- uwot::umap(
+        data_sample,
+        n_neighbors = perp,
+        init = "lvrandom",
+        n_threads = 1,  # Set n_threads to 1 for reproducibility
+        seed = 123 + j + i,
+        ret_nn = TRUE  # Include nearest neighbor information in the output
+      )
+
+      # Ensure NN information is present
+      knn.info <- list(idx = out$nn$euclidean$idx, dist = out$nn$euclidean$dist)
+
+      embedding <- out$embedding  # Get the embedding component
+
+    } else {
+      # Subsequent runs - reuse precomputed NN
+      embedding <- uwot::umap(
+        data_sample,
+        n_neighbors = perp,
+        init = "lvrandom",
+        n_threads = 1,  # Set n_threads to 1 for reproducibility
+        seed = 123 + j + i,
+        nn_method = knn.info,  # Reuse NN information with proper format
+        ret_nn = FALSE
+      )
+    }
+
+    knn.mat[[i]] <- findKmknn(embedding, k = 50)$index
+    print(c(i, j))
+  }
+
+  # End timing the entire UMAP run
+  end_time <- Sys.time()
+  print(start_time)
+  print(end_time)
+  runtime <- end_time - start_time
+  print(runtime)
+  runtime.list[[as.character(j)]] <- runtime  # Store runtime in the list
+  print(paste("Runtime for sample size", j, ":", runtime))
+
+  # Save results
+  # save(knn.mat, embedding, file = paste0("ret_nn_", data.name, "_umap_lvrandom_p", perp, "_pc", pc, "_knnMat_umap.RData"))
+}
+
+runtime.list
+
+```
+#plot the runtime for subsample runtime analysis
+```{r}
+# Plot with sample size on the x-axis
+plot(sample_sizes, runtime.list,
+     type = "b",        # "b" indicates both points and lines
+     main = "Relationship Between Sample Size and Runtime",
+     xlab = "Sample Sizes", 
+     ylab = "Runtime (minute)",
+     pch = 16,          # Change the point type to solid circles
+     col = "blue",      # Set the color of the points and line to blue
+     cex = 1.3,         # Make the points slightly larger
+     las = 1,           # Make the y-axis labels horizontal
+     lwd = 2)           # Line width to make the line more prominent
+
+# Add grid lines to the plot for better readability
+grid(nx = NULL, ny = NULL, lty = 2, col = "gray")
+
+```

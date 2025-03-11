@@ -1,0 +1,413 @@
+
+#input gene names
+```{r}
+gene_metadata <- read.csv("ipsc_gene_metadata.csv", header = TRUE, row.names = 1)
+print(gene_metadata)
+nrow(gene_metadata)
+
+```
+
+
+```{r}
+#run local stability first
+# Ensure alignment between stability scores and scale.data
+if (length(local_stability) != ncol(scale.data)) {
+  stop("Length of local_stability does not match the number of cells in scale.data")
+}
+
+# Extract gene names from gene_metadata row names
+gene_names <- rownames(gene_metadata) # Assuming gene names are stored as row names in gene_metadata
+
+# Initialize results data frame
+results <- data.frame(Gene = gene_names, Correlation = NA, P.value = NA)
+
+# Loop through each gene (row in scale.data)
+for (i in 1:nrow(scale.data)) {
+  gene_expression <- scale.data[i, ]  # Expression profile for the current gene across cells
+  
+  # Perform correlation (Spearman or Pearson)
+  cor_test <- cor.test(gene_expression, local_stability, method = "spearman")  # Change to "pearson" if needed
+  
+  # Store results
+  results$Correlation[i] <- cor_test$estimate
+  results$P.value[i] <- cor_test$p.value
+}
+
+# Apply multiple testing correction (Benjamini-Hochberg)
+results$Adjusted.P.value <- p.adjust(results$P.value, method = "BH")
+
+# Filter significant genes with adjusted p-value < 0.05
+significant_genes <- subset(results, Adjusted.P.value < 0.05)
+
+# Display significant genes
+print(significant_genes)
+
+print(gene_names)
+
+```
+
+#store significant genes for Gene Enrichment Analysis
+```{r}
+sig_gene_names <- significant_genes$Gene
+write.csv(sig_gene_names, "ipsc_significant_genes.csv", row.names = FALSE)
+```
+
+```{r}
+# Add log-transformed p-values to results
+results$LogP <- -log10(results$Adjusted.P.value)
+
+# Enhanced Volcano Plot
+ggplot(results, aes(x = Correlation, y = -log10(Adjusted.P.value))) +
+  geom_point(alpha = 0.6, color = "gray") + # Default points
+  geom_point(data = subset(results, Adjusted.P.value < 0.05),
+             aes(x = Correlation, y = -log10(Adjusted.P.value)),
+             color = "red", size = 2) + # Highlight significant genes
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "blue") + # Significance threshold
+  geom_vline(xintercept = c(-0.1, 0.1), linetype = "dotted", color = "black") + # Add narrow correlation threshold
+  geom_text(data = subset(results, Adjusted.P.value < 0.05 & abs(Correlation) > 0.1),
+            aes(label = Gene), size = 3, hjust = 1.2, vjust = 1.2, color = "black") + # Label key genes
+  scale_x_continuous(limits = c(-0.2, 0.2), breaks = seq(-0.2, 0.2, 0.05)) + # Adjust x-axis for narrow range
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1))) + # Expand y-axis
+  labs(
+    title = "Enhanced Volcano Plot: Gene Expression vs. Stability",
+    x = "Correlation Coefficient",
+    y = "-Log10(Adjusted P-value)"
+  ) +
+  theme_minimal()
+
+
+```
+
+```{r}
+enrichment_results <- read.table("ipsc_KEGG.txt", header = FALSE, sep = "\t")
+colnames(enrichment_results) <- c("#", "Category", "Term", "Kappa")
+print(enrichment_results)
+
+# Filter terms with Kappa score > 0.5
+filtered_results <- subset(enrichment_results, Kappa > 0.5)
+
+# Display the filtered results
+print(filtered_results)
+
+
+
+
+
+
+
+# Bar Plot of Top Pathways
+
+# Load ggplot2 for visualization
+library(ggplot2)
+
+# Sort the results by Kappa in descending order
+filtered_results <- filtered_results[order(-filtered_results$Kappa), ]
+
+# Select the top 10 pathways
+top_results <- head(filtered_results, 10)
+
+# Create a bar plot
+ggplot(top_results, aes(x = reorder(Term, Kappa), y = Kappa)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  coord_flip() +
+  theme_minimal() +
+  labs(
+    title = "Top Enriched Pathways",
+    x = "Pathway",
+    y = "Kappa Score"
+  )
+
+
+
+
+
+
+# Bubble Plot (Kappa vs. Category)
+
+ggplot(filtered_results, aes(x = Category, y = Kappa, size = Kappa, color = Kappa)) +
+  geom_point(alpha = 0.7) +
+  theme_minimal() +
+  labs(
+    title = "Bubble Plot of Enriched Pathways",
+    x = "Category",
+    y = "Kappa Score"
+  )
+
+```
+
+
+
+```{r}
+# Ensure gene_metadata has the correct order for mapping
+gene_metadata$Gene <- gene_names  # Add the row names of scale.data to gene_metadata
+
+# Replace numerical IDs in scale.data with gene names
+rownames(scale.data) <- gene_metadata$Gene
+
+# Select a top gene for visualization
+top_gene <- significant_genes$Gene[1]  # Select the top gene from significant_genes
+gene_index <- which(rownames(scale.data) == top_gene)  # Find the row index in scale.data for the gene
+
+# Check if the gene exists in scale.data
+if (length(gene_index) == 0) {
+  stop(paste("Top gene", top_gene, "not found in scale.data"))
+}
+
+# Extract expression values for the top gene
+expression <- scale.data[gene_index, ]
+
+# Create a data frame for t-SNE overlay visualization
+tsne_plot_data <- data.frame(
+  dim1 = Y[, 1],  # First t-SNE dimension
+  dim2 = Y[, 2],  # Second t-SNE dimension
+  Expression = expression  # Expression values for the top gene
+)
+
+# Generate t-SNE plot with gene expression overlay
+tsne_plot <- ggplot(tsne_plot_data, aes(x = dim1, y = dim2, color = Expression)) +
+  geom_point(size = 1.5) +
+  scale_color_gradient(low = "blue", high = "red") +
+  labs(
+    title = paste("t-SNE Overlay: Expression of", top_gene),
+    x = "t-SNE Dimension 1",
+    y = "t-SNE Dimension 2"
+  ) +
+  theme_minimal()
+
+# Display t-SNE plot
+print(tsne_plot)
+
+
+```
+
+
+# Code Showing Overall Pathway Activity
+```{r}
+#Extract Gene Expression Data
+cytokine_genes <- c("FGF8", "FGFR1", "FGFR2", "KIT", "PDGFB", "PDGFRA", "PDGFRB", "VEGFA")
+cytokine_expression_data <- scale.data[rownames(scale.data) %in% cytokine_genes, ]
+
+#Calculate Aggregate Expression
+pathway_activity <- colMeans(cytokine_expression_data)
+
+#Overlay Pathway Activity on t-SNE
+tsne_cytokine_data <- data.frame(
+  dim1 = Y[, 1],  # First t-SNE dimension
+  dim2 = Y[, 2],  # Second t-SNE dimension
+  CytokineActivity = pathway_activity
+)
+
+#Generate a t-SNE plot highlighting pathway activity
+ggplot(tsne_cytokine_data, aes(x = dim1, y = dim2, color = CytokineActivity)) +
+  geom_point(size = 1.5) +
+  scale_color_gradient(low = "blue", high = "red") +
+  labs(
+    title = "t-SNE Overlay: Cytokine-Cytokine Receptor Interaction Pathway",
+    x = "t-SNE Dimension 1",
+    y = "t-SNE Dimension 2"
+  ) +
+  theme_minimal()
+
+
+```
+
+#Code Showing Individual Gene Activity
+```{r}
+# List of specific genes
+specific_genes <- c("FGF8", "FGFR1", "FGFR2", "KIT", "PDGFB", "PDGFRA", "PDGFRB", "VEGFA")
+
+# Loop through each gene to generate individual t-SNE plots
+for (gene in specific_genes) {
+  # Check if the gene exists in scale.data
+  if (!(gene %in% rownames(scale.data))) {
+    warning(paste("Gene", gene, "not found in scale.data. Skipping."))
+    next
+  }
+  
+  # Extract the expression data for the gene
+  gene_expression <- scale.data[gene, ]
+  
+  # Create a data frame for t-SNE overlay visualization
+  tsne_plot_data <- data.frame(
+    dim1 = Y[, 1],  # First t-SNE dimension
+    dim2 = Y[, 2],  # Second t-SNE dimension
+    Expression = gene_expression  # Expression values for the gene
+  )
+  
+  # Generate t-SNE plot for the gene
+  tsne_plot <- ggplot(tsne_plot_data, aes(x = dim1, y = dim2, color = Expression)) +
+    geom_point(size = 1.5) +
+    scale_color_gradient(low = "blue", high = "red") +
+    labs(
+      title = paste("t-SNE Overlay: Expression of", gene),
+      x = "t-SNE Dimension 1",
+      y = "t-SNE Dimension 2"
+    ) +
+    theme_minimal()
+  
+  # Print the plot
+  print(tsne_plot)
+}
+
+```
+
+
+#gene expression plot with tsne plot
+```{r}
+plot.data <- data.frame(dim1 = Y[, 1], dim2 = Y[, 2], cell_type = cls)
+ggplot(plot.data, aes(dim1, dim2, colour = cell_type)) +
+  geom_point(size = 1) +
+  labs(title = paste(data.name, "- UMAP Initialization: Cell Types (GCP =", GCP, ")")) +
+  theme_minimal()
+
+# 1. Quantify Pathway Activity by Cell Type
+plot.data$PathwayActivity <- pathway_activity
+cell_type_activity <- plot.data %>%
+  group_by(cell_type) %>%
+  summarize(MeanPathwayActivity = mean(PathwayActivity, na.rm = TRUE))
+print(cell_type_activity)
+
+
+# 2. Visualize Pathway Activity by Cell Type
+ggplot(cell_type_activity, aes(x = cell_type, y = MeanPathwayActivity, fill = cell_type)) +
+  geom_bar(stat = "identity") +
+  theme_minimal() +
+  labs(
+    title = "Pathway Activity by Cell Type",
+    x = "Cell Type",
+    y = "Mean Pathway Activity"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  
+
+# 3. Compare Pathway Activity Across Cell Types
+anova_result <- aov(PathwayActivity ~ cell_type, data = plot.data) # Perform ANOVA to test differences in pathway activity among cell types
+summary(anova_result)
+posthoc_result <- TukeyHSD(anova_result) # Perform post-hoc analysis if ANOVA is significant
+print(posthoc_result)
+
+# 4. Overlay Pathway Activity on t-SNE (Per Cell Type)
+ggplot(plot.data, aes(x = dim1, y = dim2, color = PathwayActivity)) +
+  geom_point(size = 1) +
+  facet_wrap(~cell_type) +
+  scale_color_gradient(low = "blue", high = "red") +
+  labs(
+    title = "t-SNE Overlay: Pathway Activity by Cell Type",
+    x = "t-SNE Dimension 1",
+    y = "t-SNE Dimension 2"
+  ) +
+  theme_minimal()
+```
+
+#Perform statistical tests (e.g., ANOVA) to confirm if pathway activity is significantly different across cell types
+```{r}
+# 1. Quantify Pathway Activity by Cell Type
+plot.data$PathwayActivity <- pathway_activity  # Ensure PathwayActivity is added to plot.data
+cell_type_activity <- plot.data %>%
+  group_by(cell_type) %>%
+  summarize(MeanPathwayActivity = mean(PathwayActivity, na.rm = TRUE),
+            SDPathwayActivity = sd(PathwayActivity, na.rm = TRUE),
+            CellCount = n())
+print(cell_type_activity)
+
+# 2. Visualize Pathway Activity by Cell Type
+ggplot(cell_type_activity, aes(x = cell_type, y = MeanPathwayActivity, fill = cell_type)) +
+  geom_bar(stat = "identity", color = "black", alpha = 0.8) +
+  geom_errorbar(aes(ymin = MeanPathwayActivity - SDPathwayActivity,
+                    ymax = MeanPathwayActivity + SDPathwayActivity),
+                width = 0.2) +
+  theme_minimal() +
+  labs(
+    title = "Pathway Activity by Cell Type",
+    x = "Cell Type",
+    y = "Mean Pathway Activity"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# 3. Compare Pathway Activity Across Cell Types
+anova_result <- aov(PathwayActivity ~ cell_type, data = plot.data)  # Perform ANOVA
+summary(anova_result)
+
+# Perform post-hoc analysis if ANOVA is significant
+posthoc_result <- TukeyHSD(anova_result)
+print(posthoc_result)
+
+# Convert Tukey's post-hoc results into a data frame for better interpretation
+# Convert Tukey's post-hoc results into a data frame for better interpretation
+posthoc_df <- as.data.frame(posthoc_result$cell_type)
+posthoc_df <- posthoc_df %>%
+  rownames_to_column("Comparison") %>%  # Move row names (pairwise comparisons) into a column
+  mutate(Significant = ifelse(`p adj` < 0.05, "Yes", "No"))  # Use correct column name for adjusted p-values
+
+# Display the post-hoc results
+print(posthoc_df)
+
+# 4. Overlay Pathway Activity on t-SNE (Per Cell Type)
+ggplot(plot.data, aes(x = dim1, y = dim2, color = PathwayActivity)) +
+  geom_point(size = 1) +
+  facet_wrap(~cell_type) +
+  scale_color_gradient(low = "blue", high = "red") +
+  labs(
+    title = "t-SNE Overlay: Pathway Activity by Cell Type",
+    x = "t-SNE Dimension 1",
+    y = "t-SNE Dimension 2"
+  ) +
+  theme_minimal()
+
+```
+
+#Gene Co-expression Analysis Code
+```{r}
+# Required Libraries
+library(ggplot2)
+library(pheatmap)
+library(RColorBrewer)
+
+# Define Cytokine-Cytokine Receptor Interaction Genes
+cytokine_genes <- c("FGF8", "FGFR1", "FGFR2", "KIT", "PDGFB", "PDGFRA", "PDGFRB", "VEGFA")
+
+# Subset Expression Data for Selected Genes
+cytokine_expression_data <- scale.data[rownames(scale.data) %in% cytokine_genes, ]
+
+# Calculate Pairwise Correlation (Spearman or Pearson)
+coexpression_matrix <- cor(t(cytokine_expression_data), method = "spearman")
+
+# Enhanced Heatmap Visualization
+pheatmap(
+  coexpression_matrix,
+  cluster_rows = TRUE,
+  cluster_cols = TRUE,
+  display_numbers = TRUE,                # Show correlation values
+  number_color = "black",                # Number color
+  fontsize_number = 8,                   # Font size for numbers
+  color = colorRampPalette(brewer.pal(9, "RdBu"))(100), # Enhanced color gradient
+  main = "Gene Co-expression Heatmap",   # Title
+  fontsize = 12,                         # General font size
+  fontsize_row = 10,                     # Row label font size
+  fontsize_col = 10,                     # Column label font size
+  legend = TRUE,                         # Display legend
+  legend_breaks = seq(-1, 1, 0.2),       # Adjust legend breaks
+  legend_labels = seq(-1, 1, 0.2),       # Adjust legend labels
+  border_color = NA                      # No gridlines for cleaner look
+)
+
+# Save the Plot as a High-Quality PNG
+png("gene_coexpression_heatmap.png", width = 1000, height = 800, res = 150)
+pheatmap(
+  coexpression_matrix,
+  cluster_rows = TRUE,
+  cluster_cols = TRUE,
+  display_numbers = TRUE,
+  number_color = "black",
+  fontsize_number = 8,
+  color = colorRampPalette(brewer.pal(9, "RdBu"))(100),
+  main = "Gene Co-expression Heatmap",
+  fontsize = 12,
+  fontsize_row = 10,
+  fontsize_col = 10,
+  legend = TRUE,
+  legend_breaks = seq(-1, 1, 0.2),
+  legend_labels = seq(-1, 1, 0.2),
+  border_color = NA
+)
+dev.off()
+```

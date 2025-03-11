@@ -1,0 +1,184 @@
+
+
+
+#Phate R
+```{r}
+#https://github.com/KrishnaswamyLab/phateR?tab=readme-ov-file
+
+#install.packages("reticulate")
+library(reticulate)
+use_condaenv("phateR", required = TRUE)
+py_discover_config()
+
+library(phateR)
+
+```
+
+#One round example
+```{r}
+
+#install.packages("phateR")
+
+out <- phate(data.denoise, 
+             ndim = 2,              # The number of dimensions for embedding, similar to t-SNE
+             knn = 2,              # Similar to "perplexity", controls the number of nearest neighbors
+             seed = 123,            # Set the random seed for reproducibility
+             verbose = TRUE)        # Optional: prints updates during the computation
+
+# Extract embedding for further analysis or plotting
+embedding <- out$embedding
+embedding
+```
+
+#3 seeds
+```{r}
+set.seed(123)
+seeds <- c(123, 234, 345)
+
+for (j in 1:length(GCP)) {  
+  knn_value <- GCP[j]  
+  
+  for (seed in seeds) {  # Iterate through the three seeds
+    knn.mat <- list()         
+    
+    for (i in 1:N) {        
+      # Run PHATE with the current seed
+      out <- phate(data.denoise, 
+                   ndim = 2,              
+                   knn = knn_value,      
+                   seed = seed + i,  # Different seed for each iteration        
+                   verbose = TRUE)        
+
+      knn.mat[[i]] <- findKmknn(out$embedding, k = 50)$index  
+      print(paste("Seed:", seed, "Iteration:", i, "GCP Index:", j))    
+    }
+    
+    Y <- out$embedding
+    
+    # Save the results for the current seed
+    save(knn.mat, Y, file = paste0(data.name, "_phate_random_knn", knn_value, "_seed", seed, "_N", i, ".RData"))
+  }
+}
+
+```
+
+```{r}
+# Define the seeds to be used
+seeds <- c(123, 234, 345)
+
+# Initialize variables to store averaged scores
+global_stability_avg <- numeric(length(GCP))
+concord_s_avg <- numeric(length(GCP))
+sil_s_avg <- numeric(length(GCP))
+cor_s_avg <- numeric(length(GCP))
+db_s_avg <- numeric(length(GCP))
+npurity_s_avg <- numeric(length(GCP))
+clisi_s_avg <- numeric(length(GCP))
+
+# Loop over GCP values
+for (jj in 1:length(GCP)) {
+  perp <- GCP[jj]
+  
+  # Initialize variables to store scores for all seeds
+  global_stability_list <- c()
+  concord_s_list <- c()
+  sil_s_list <- c()
+  cor_s_list <- c()
+  db_s_list <- c()
+  npurity_s_list <- c()
+  clisi_s_list <- c()
+  
+  # Loop over seeds
+  for (seed in seeds) {
+    set.seed(seed)
+    
+    # Load data for this GCP and seed
+    load(file.path(paste0(data.name, "_phate_random_knn", knn_value, "_seed", seed, "_N", i, ".RData")))
+    k <- 50
+    
+    # Accumulate neighbor counts (construct knn graph)
+    knn.graph <- matrix(0, ncol = dim(knn.mat[[1]])[1], nrow = dim(knn.mat[[1]])[1])
+    for (i in 1:N) {
+      for (j in 1:dim(knn.mat[[1]])[1]) {
+        knn.graph[j, knn.mat[[i]][j, 1:k]] <- knn.graph[j, knn.mat[[i]][j, 1:k]] + 1
+      }
+      knn.graph <- pmax(knn.graph, t(knn.graph))  # Ensure symmetry
+    }
+    
+    # Compute KNN scores
+    knn.score <- sapply(1:dim(knn.mat[[1]])[1], function(i) {
+      quantile(knn.graph[i, which(knn.graph[i, ] != 0)] / N, 0.75)
+    })
+    global_stability_list <- c(global_stability_list, mean(knn.score))
+    
+    # Compute concordance
+    knn.h <- findKmknn(data.denoise, k = 100)$index
+    knn.l <- findKmknn(Y, k = 100)$index
+    concord.score <- sapply(1:dim(knn.h)[1], function(i) {
+      length(intersect(knn.h[i, 1:100], knn.l[i, 1:100])) / 100
+    })
+    concord_s_list <- c(concord_s_list, mean(concord.score))
+    
+    # Compute clustering metrics
+    sil_s_list <- c(sil_s_list, mean(silhouette(as.numeric(cls), dist(Y))[, 3], na.rm = TRUE))
+    cor_s_list <- c(cor_s_list, cor(dist(Y), dist(data.denoise), use = "complete.obs"))
+    db_s_list <- c(db_s_list, 1 / index.DB(Y, cl = as.numeric(cls))$DB)
+    
+    # Compute normalized purity
+    npurity_score <- neighborPurity(
+      x = Y,
+      clusters = as.numeric(cls),
+      k = 50,
+      weighted = TRUE,
+      BNPARAM = KmknnParam(),
+      BPPARAM = SerialParam()
+    )
+    npurity_s_list <- c(npurity_s_list, mean(npurity_score$purity, na.rm = TRUE))
+    
+    # Compute cLISI score
+    meta_data <- data.frame(cell_type = cls)
+    lisi_scores <- compute_lisi(Y, meta_data, c("cell_type"))
+    clisi_s_list <- c(clisi_s_list, mean(1 / lisi_scores$cell_type, na.rm = TRUE))
+  }
+  
+  # Average scores across seeds for this GCP
+  global_stability_avg[jj] <- mean(global_stability_list)
+  concord_s_avg[jj] <- mean(concord_s_list)
+  sil_s_avg[jj] <- mean(sil_s_list)
+  cor_s_avg[jj] <- mean(cor_s_list)
+  db_s_avg[jj] <- mean(db_s_list)
+  npurity_s_avg[jj] <- mean(npurity_s_list)
+  clisi_s_avg[jj] <- mean(clisi_s_list)
+  
+  print(paste("GCP", perp, "complete."))
+}
+
+# Visualization of metrics
+par(mfrow = c(1, 1), mar = c(5, 5, 4, 2), pty = "s", lwd = 2, cex = 1.3, asp = 1)
+
+plot_improved <- function(x, y, ylab, main_title) {
+  plot(x, y,
+       log = "x",
+       main = main_title,
+       xlab = "GCP",
+       ylab = ylab,
+       type = "l",
+       col = "black",
+       lwd = 2,
+       cex.lab = 1.4,
+       cex.main = 1.6,
+       cex.axis = 1.2
+  )
+  grid(col = "gray", lty = "dotted")
+  box(lwd = 2)
+}
+
+# Plot averaged metrics
+plot_improved(GCP, global_stability_avg, ylab = "KNN", main_title = paste(data.name, "- PhateR Random Initialization: Averaged Global Stability"))
+plot_improved(GCP, concord_s_avg, ylab = "Concordance", main_title = paste(data.name, "- PhateR Random Initialization: Averaged Concordance Score"))
+plot_improved(GCP, cor_s_avg, ylab = "Correlation", main_title = paste(data.name, "- PhateR Random Initialization: Averaged Correlation Score"))
+plot_improved(GCP, db_s_avg, ylab = "Davies-Bouldin", main_title = paste(data.name, "- PhateR Random Initialization: Averaged DB Index"))
+plot_improved(GCP, sil_s_avg, ylab = "Silhouette", main_title = paste(data.name, "- PhateR Random Initialization: Averaged Silhouette Score"))
+plot_improved(GCP, npurity_s_avg, ylab = "Purity", main_title = paste(data.name, "- PhateR Random Initialization: Averaged Normalized Purity"))
+plot_improved(GCP, clisi_s_avg, ylab = "cLISI", main_title = paste(data.name, "- PhateR Random Initialization: Averaged Clustering LISI"))
+```

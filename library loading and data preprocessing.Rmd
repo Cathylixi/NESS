@@ -1,0 +1,163 @@
+
+#necessary packages
+```{r}
+library(umap)
+library(uwot)
+library(Rtsne)
+library(fpc)
+library(ggplot2)
+library(ggsignif)
+library(RSpectra)
+library(BiocNeighbors)
+library(Rfast)
+library(cluster)
+library(clusterSim)
+library(pcaPP)
+library(dplyr)
+library(tidyverse)
+library(purrr)
+library(BiocParallel)
+library(bluster)
+library(ggpubr)
+library(Seurat)
+library(data.table)
+library(stringr)
+library(RColorBrewer)
+#install.packages("devtools")
+library(devtools)
+#devtools::install_github("JSB-UCLA/scDEED") 
+library(scDEED)
+#devtools::install_github("immunogenomics/lisi") 
+library(lisi)
+
+#workdir<-"/Users/wgl/Desktop/data" 
+#setwd(workdir) 
+
+#install.packages("remotes")
+#remotes::install_github("LTLA/bluster")
+library(bluster)
+#if (!requireNamespace("BiocParallel", quietly = TRUE)) {
+    #if (!requireNamespace("BiocManager", quietly = TRUE))
+        #install.packages("BiocManager")
+    #BiocManager::install("BiocParallel")
+#}
+
+library(BiocParallel)
+
+# Install and load the dbscan package
+#if (!requireNamespace("dbscan", quietly = TRUE)) {
+    #install.packages("dbscan")
+#}
+#install.packages("fpc") 
+
+library(dbscan)
+library(fpc)
+
+```
+
+#mouse hematopoiesis data preprocessing
+```{r}
+load("mouse_hema.RData")
+data.name = "mouse_hema"
+scale.data<-t(scale.data)
+
+
+# merge small categories to ONE
+cls <- gsub("[0-9]+Baso", "BASO", cls)
+cls <- gsub("14Mo|15Mo", "MO", cls)
+cls <- gsub("16Neu|17Neu", "NEU", cls)
+cls <- gsub("[0-9]+Ery", "ERY", cls)
+cls <- gsub("^[0-9]+", "", cls)
+
+# Convert to factor and drop unused levels
+cls <- factor(cls)
+
+# Check the new levels
+levels(cls)
+
+```
+
+#ipsc data
+```{r}
+#ipsc h5ad
+#if (!requireNamespace("BiocManager", quietly = TRUE))
+    #install.packages("BiocManager")
+
+#BiocManager::install("zellkonverter")
+#BiocManager::install("SingleCellExperiment")
+library(SummarizedExperiment)
+library(zellkonverter)
+
+sce <- readH5AD("ipsc.h5ad")
+sce
+
+expression_data <- assay(sce, "X")
+dim(expression_data)
+
+scale.data <- expression_data
+
+cls <- as.data.frame(colData(sce))
+colnames(cls)[1] <- "cell_type"
+cls <- as.factor(cls$cell_type)
+
+data.name = "ipsc"
+```
+```{r}
+#ipsc csv from Python
+data.name = "ipsc"
+data <- read.csv("ipsc_data.csv")
+scale.data <- as.matrix(t(data))
+cls <- read.csv("ipsc_cls.csv")
+cls <- as.factor(cls$cls)
+print(data)
+print(cls)
+```
+
+#murine intestinal organoid differentiation preprocessed data
+```{r}
+data.name = "intestinal"
+data <- read.csv("murine_preprocessed.csv")
+scale.data <- t(as.matrix(data[,9:2008]))
+cls <- data["cell_type"]
+cls <- as.factor(cls$cell_type)
+```
+
+#embryoid_body
+```{r}
+data <- read.csv("embryoid_body.csv")
+data.name = "embryoid_body"
+scale.data <- t(as.matrix(data[,9:ncol(data)]))
+cls <- data["cell_type"]
+cls <- as.factor(cls$cell_type)
+```
+
+#General data preprocessing with SVD
+```{r}
+#check dimensions
+eg.v = svds((scale.data), k=30)$d  
+length(eg.v)
+plot(eg.v)
+plot((eg.v[1:29]/eg.v[2:30]))
+plot((eg.v[1:29]-eg.v[2:30])/eg.v[2:30])
+max(which(eg.v[1:29]/eg.v[2:30]>1.2))
+
+####### effect of perplexity
+pc = max(which(eg.v[1:29]/eg.v[2:30]>1.1))
+svd.data = svds(scale.data, k=pc)
+data.denoise = svd.data$v %*% diag(svd.data$d)
+dim(data.denoise) 
+
+N=30
+```
+
+#simulated curve data (cyclic_6.RData)
+```{r}
+load("cyclic_6(Simulated Curve).RData")
+```
+
+# store data.denoise and cell type(cls)
+```{r}
+write.csv(data.denoise, "ipsc_data_denoise.csv", row.names = TRUE)
+data2 <- as.data.frame(cls)
+write.csv(Y, "ipsc_tsne_random_p30_pc6_Y_matrix.csv", row.names = TRUE)
+```

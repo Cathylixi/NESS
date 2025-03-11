@@ -1,0 +1,75 @@
+
+#dynamicViz
+```{r}
+library(reticulate)
+use_condaenv("dynamic", required = TRUE)
+
+#use data.denoise
+
+# Import the dynamicviz library and boot module
+dynamicviz <- import("dynamicviz")
+boot <- import("dynamicviz.boot")
+boot <- dynamicviz$boot
+
+# Convert your data matrix to a Python format
+data_matrix <- as.matrix(data.denoise)
+py_data_matrix <- r_to_py(data_matrix) # Convert R matrix to Python format
+
+# Run the visualization and store the reduced data
+reduced_data_matrix <- boot$visualize(py_data_matrix)
+
+# Convert the reduced data matrix back to R format
+r_reduced_data_matrix <- py_to_r(reduced_data_matrix)
+
+# View the reduced data matrix in R
+print(r_reduced_data_matrix)
+
+```
+
+#EMBEDER
+```{r}
+#use data.denoise
+
+embedr <- import("embedr")
+
+py_data_matrix <- r_to_py(data.denoise)
+
+result <- embedr$embed(py_data_matrix)
+
+r_result <- py_to_r(result)
+
+print(r_result)
+
+```
+
+```{r}
+# Load the reticulate package
+library(reticulate)
+
+# Specify the Python environment that has EMBEDR installed.
+# Use the name of your conda environment or virtual environment.
+# If you're using a conda environment called 'embedr':
+use_condaenv("embed", required = TRUE)
+
+# Import Python modules
+EMBEDR <- import("EMBEDR")
+np <- import("numpy")
+
+# Load data from text file (change the path to match your file location)
+#X <- np$loadtxt("./data/mnist2500_X.txt")$astype("float")
+
+# Create an EMBEDR object
+embObj <- EMBEDR$EMBEDR(project_dir = './')
+
+# Fit the model
+embObj$fit(data.denoise)
+
+# Plot the results
+embObj$plot()
+
+```
+
+
+
+
+```

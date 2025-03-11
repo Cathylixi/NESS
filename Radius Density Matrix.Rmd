@@ -1,0 +1,314 @@
+
+```{r}
+data.name = "mouse_hema"
+N=30
+```
+
+#read data
+```{r}
+#load(file.path(paste0(data.name, "_bad_", jj, "_tsne_random_p", GCP, "_pc", pc, "_knnMat.RData")))
+```
+
+#Radis Density Matrix using 30 nearest neighbor
+```{r}
+# Select data points' 30 nearest neighbors
+TEN_nearest_neighbor_matrix <- knn.mat[[1]][, 1:30]
+
+# Create an empty matrix to store point-to-point distances
+distances <- matrix(0, nrow = nrow(data.denoise), ncol = 30)
+
+# Define a function to calculate Euclidean distance between two points
+euclidean_distance <- function(point1, point2) {
+    sqrt(sum((point1 - point2)^2))
+}
+
+# Calculate distances from each point to its nearest 30 neighbors
+for (i in seq_len(nrow(data.denoise))) {
+    first_point <- data.denoise[i, ]  # Extract one point (row)
+    
+    for (j in 1:30) {
+        neighbor_idx <- TEN_nearest_neighbor_matrix[i, j]  # Correct neighbor index
+        if (!is.na(neighbor_idx) && neighbor_idx != i) {  # Ensure it's not self-distance
+            distances[i, j] <- euclidean_distance(first_point, data.denoise[neighbor_idx, ])
+        }
+    }
+}
+
+print(distances)
+
+# Calculate the 5% quantile (96th percentile) of the valid distances
+valid_distances <- distances[!is.na(distances) & distances > 0]
+quantile_5_percent <- quantile(valid_distances, 0.96)
+print(quantile_5_percent)
+
+# Plot the distribution of the distances
+hist(valid_distances, main = "Distribution of Distances", xlab = "Distance", breaks = 30,
+     col = "blue", border = "white")
+plot(density(valid_distances), main = "Distribution of Distances", xlab = "Distance",
+     ylab = "Density", col = "Black")
+boxplot(valid_distances, horizontal = TRUE, col = "grey", main = "Boxplot of Distances")
+
+```
+
+#loop to explore the average distance for a list of GCP
+```{r}
+library(ggplot2)
+library(lisi)
+
+# Define list of GCP values
+GCP_list <- c(5,10,15,20,25,30,40,50,80,100,150,200,300)
+
+# Initialize lists to store results
+average_distances_list <- list()
+global_stability_list <- list()
+
+# Euclidean distance function
+euclidean_distance <- function(point1, point2) { 
+    sqrt(sum((point1 - point2)^2)) 
+}
+
+# Loop through each GCP value
+for (GCP in GCP_list) {
+    # Construct the filename
+    file_name <- paste0(data.name, "_tsne_random_p", GCP, "_pc", pc, "_knnMat.RData")
+
+    # Load the file if it exists
+    if (file.exists(file_name)) {
+        load(file_name)
+        print(paste("Loaded:", file_name))
+    } else {
+        print(paste("File not found:", file_name))
+        next  # Skip to the next iteration if the file doesn't exist
+    }
+
+    # Extract the 30 nearest neighbors
+    TEN_nearest_neighbor_matrix <- knn.mat[[1]][, 1:30]
+    
+    # Compute distances
+    distances <- matrix(0, nrow = nrow(data.denoise), ncol = 30)
+    for (i in seq_len(nrow(data.denoise))) {
+        first_point <- data.denoise[i, ]
+        for (j in 1:30) {
+            neighbor_idx <- TEN_nearest_neighbor_matrix[i, j]
+            if (!is.na(neighbor_idx) && neighbor_idx != i) {
+                distances[i, j] <- euclidean_distance(first_point, data.denoise[neighbor_idx, ])
+            }
+        }
+    }
+
+    # Extract valid distances and compute average distance
+    valid_distances <- distances[!is.na(distances) & distances > 0]
+    average_distance <- mean(valid_distances, na.rm = TRUE)
+    average_distances_list[[as.character(GCP)]] <- average_distance
+
+    # --- Compute Global Stability ---
+    k <- 50  # Number of nearest neighbors
+    knn.graph <- matrix(0, ncol = dim(knn.mat[[1]])[1], nrow = dim(knn.mat[[1]])[1])
+
+    for (i in 1:N) {
+        for (j in 1:dim(knn.mat[[1]])[1]) {
+            knn.graph[j, knn.mat[[i]][j, 1:k]] <- knn.graph[j, knn.mat[[i]][j, 1:k]] + 1
+        }
+        knn.graph <- pmax(knn.graph, t(knn.graph))  # Ensure symmetry
+    }
+
+    # Compute knn scores
+    knn.score <- sapply(1:nrow(knn.mat[[1]]), function(i) {
+        neighbors <- which(knn.graph[i, ] != 0)
+        quantile(knn.graph[i, neighbors] / length(knn.mat), 0.75)
+    })
+
+    # Compute global stability as the mean of knn scores
+    global_stability <- mean(knn.score)
+    global_stability_list[[as.character(GCP)]] <- global_stability
+
+    print(paste("GCP:", GCP, "Average Distance:", average_distance, "Global Stability:", global_stability))
+}
+
+```
+```{r}
+library(ggplot2)
+
+# Convert lists to a data frame
+df <- data.frame(
+  Average_Distance = unlist(average_distances_list),
+  Global_Stability = unlist(global_stability_list),
+  GCP = as.numeric(names(average_distances_list))  # Include GCP for labeling
+)
+
+# Scatter plot
+ggplot(df, aes(x = Average_Distance, y = Global_Stability)) +
+  geom_point(size = 4, color = "blue") 
+
+```
+
+
+
+
+#see whether the low entropy point is in the low density area
+```{r}
+# Initialize variables
+indices_not_to_keep_list <- list()
+all_indices <- c()
+all_radius <- c()
+
+# Evaluate stability and visualize KNN graph
+for (counting in 1:99) {
+    k <- 50  # Number of nearest neighbors
+    counting_numb <- counting / 100  # Percentage for thresholding
+    
+    # Initialize the KNN graph matrix
+    knn.graph <- matrix(0, ncol = nrow(knn.mat[[1]]), nrow = nrow(knn.mat[[1]]))
+    
+    # Build the KNN graph
+    for (i in 1:length(knn.mat)) {
+        for (j in 1:nrow(knn.mat[[1]])) {
+            knn.graph[j, knn.mat[[i]][j, 1:k]] <- knn.graph[j, knn.mat[[i]][j, 1:k]] + 1
+        }
+    }
+    
+    # Symmetrize the KNN graph
+    knn.graph <- pmax(knn.graph, t(knn.graph))
+    
+    # Calculate stability score for each point
+    knn.score <- sapply(1:nrow(knn.mat[[1]]), function(i) {
+        neighbors <- which(knn.graph[i, ] != 0)
+        quantile(knn.graph[i, neighbors] / length(knn.mat), 0.75)
+    })
+    
+    # Select threshold for instability
+    threshold <- quantile(knn.score, counting_numb)
+    
+    # Identify unstable points based on the threshold
+    indices_not_to_keep <- which(knn.score <= threshold)
+    
+    # Limit the number of unstable points to the top 20% of the dataset
+    max_unstable_points <- floor(nrow(knn.mat[[1]]) * counting_numb)  # Adjust percentage as needed
+    if (length(indices_not_to_keep) > max_unstable_points) {
+        sorted_indices <- order(knn.score[indices_not_to_keep])  # Sort by stability score
+        indices_not_to_keep <- indices_not_to_keep[sorted_indices[1:max_unstable_points]]
+    }
+    
+    # Accumulate unique indices progressively
+    all_indices <- unique(c(all_indices, indices_not_to_keep))
+    
+    # Store unique indices for each iteration
+    indices_not_to_keep_list[[counting]] <- all_indices
+}
+
+# Use data.denoise (e.g., mouse_hema data t-SNE random with GCP=15)
+unlist_all <- list()
+average_radius <- list()
+
+# Extract unique indices and calculate average radius for unstable points
+for (i in 1:99) {
+    unlist_all[[i]] <- unique(unlist(indices_not_to_keep_list[[i]]))
+}
+
+for (index in seq_len(length(unlist_all))) {
+    one_point_distance_list <- c()
+    list_number <- unlist_all[[index]]  # Unique indices of unstable points
+    
+    for (i in seq_len(length(list_number))) {
+        first_point <- data.denoise[list_number[i], ]  # Extract each point
+        
+        # Calculate the distance from this point to its 10 nearest neighbors
+        for (j in 1:10) {
+            neighbor_idx <- TEN_nearest_neighbor_matrix[list_number[i], j]  # Correct neighbor index
+            if (!is.na(neighbor_idx) && neighbor_idx != list_number[i]) {
+                one_point_distance_list <- c(one_point_distance_list, 
+                                             euclidean_distance(first_point, data.denoise[neighbor_idx, ]))
+            }
+        }
+    }
+    
+    # Calculate the average radius for this iteration
+    valid_distances <- one_point_distance_list[!is.na(one_point_distance_list) & one_point_distance_list > 0]
+    all_radius[index] <- valid_distances
+    average_radius[index] <- mean(valid_distances, na.rm = TRUE)
+    print(paste("Iteration", index, "Average Radius:", average_radius[index]))
+}
+
+# Convert the list to a vector
+average_radius_vector <- unlist(average_radius) #check unstable
+average_radius_vector <- rev(average_radius_vector) #reverse --> check stable
+
+# Plotting the average radius values
+plot(average_radius_vector, type = "o", 
+     xlab = "Top n% stable data", ylab = "Average Radius",
+     main = "Average Radius of Top n% stable data", pch = 16)
+
+
+```
+
+```{r}
+
+# Extract radii for the 97%, 98%, and 99% unstable points
+radii_97 <- indices_not_to_keep_list[[97]]  # Radius for 97% unstable points
+radii_98 <- indices_not_to_keep_list[[98]]  # Radius for 98% unstable points
+radii_99 <- indices_not_to_keep_list[[99]]  # Radius for 99% unstable points
+
+diff_9798 <- setdiff(radii_98,radii_97)
+
+```
+
+#check for specific radius of unstable data threshold
+```{r}
+# Step 1: Define n% to select the top n% unstable points (generalized)
+n_percent <- 0.02  # You can set this to any desired value between 0 and 1
+
+# Step 2: Select the top n% unstable points
+threshold_n_percent <- quantile(knn.score, n_percent)  # Quantile based on n%
+indices_n_percent <- which(knn.score <= threshold_n_percent)  # Points with low stability (unstable)
+
+# Step 3: Calculate the average distance (radius) for these unstable points
+average_radius_n_percent <- numeric(length(indices_n_percent))  # Initialize vector to store average distances
+
+for (i in seq_along(indices_n_percent)) {
+    point_idx <- indices_n_percent[i]  # Get the point index
+    first_point <- data.denoise[point_idx, ]  # Extract coordinates of the point
+    
+    # Define a function for Euclidean distance between two points
+    euclidean_distance <- function(point1, point2) {
+        sqrt(sum((point1 - point2)^2))
+    }
+    
+    # Calculate distances to its 10 nearest neighbors
+    distances_to_neighbors <- numeric(10)  # Vector to store distances to 10 neighbors
+    for (j in 1:10) {
+        neighbor_idx <- TEN_nearest_neighbor_matrix[point_idx, j]  # Get the neighbor index
+        if (!is.na(neighbor_idx) && neighbor_idx != point_idx) {  # Ensure the neighbor index is valid and not self
+            distances_to_neighbors[j] <- euclidean_distance(first_point, data.denoise[neighbor_idx, ])
+        }
+    }
+    
+    # Store the average distance (radius) for this point (ignoring any NA or 0 values)
+    valid_distances <- distances_to_neighbors[!is.na(distances_to_neighbors) & distances_to_neighbors > 0]
+    if (length(valid_distances) > 0) {
+        average_radius_n_percent[i] <- mean(valid_distances)
+    } else {
+        average_radius_n_percent[i] <- NA  # If no valid neighbors found, set to NA
+    }
+}
+
+# Step 4: Plot the distribution of distances for the top n% unstable points
+hist(
+    average_radius_n_percent, 
+    main = paste("Distribution of Distances for Top", n_percent * 100, "% Unstable Data"), 
+    xlab = "Average Distance", 
+    breaks = 30, col = "blue", border = "white"
+)
+
+# Optional: Plot density of the distances
+plot(
+    density(average_radius_n_percent, na.rm = TRUE),  # Ignore NA values for density plot
+    main = paste("Density Plot of Distances for Top", n_percent * 100, "% Unstable Data"), 
+    xlab = "Average Distance", 
+    col = "black"
+)
+
+# Step 5: Calculate and print the overall average radius for the top n% unstable points
+overall_average_radius_n_percent <- mean(average_radius_n_percent, na.rm = TRUE)  # Ignore NA values for the mean
+print(paste("Overall Average Distance for Top", n_percent * 100, "% Unstable Data:", overall_average_radius_n_percent))
+
+```

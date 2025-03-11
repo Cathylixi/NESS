@@ -1,0 +1,909 @@
+
+```{r}
+data.name = "mouse_hema"
+load(file.path("mouse_hema_tsne_random_p15_pc5_knnMat.RData")) #change as needed  
+
+# Perplexity setting
+GCP = 100 #adjust as needed
+```
+
+#calculate TSNE scDEED ratio
+```{r}
+set.seed(123)
+
+# Create a Seurat object
+new_seurat_object <- CreateSeuratObject(scale.data)
+LayerData(new_seurat_object, layer = 'scale.data', assay = 'RNA') <- scale.data
+VariableFeatures(new_seurat_object) <- Features(new_seurat_object)
+new_seurat_object <- RunPCA(new_seurat_object)
+
+# Extract t-SNE embeddings
+tsne_embeddings <- Y
+colnames(tsne_embeddings) <- c("tSNE_1", "tSNE_2")
+
+# Ensure the t-SNE result has proper row names
+seurat_cells <- colnames(new_seurat_object)
+rownames(tsne_embeddings) <- seurat_cells
+
+# Create a DimReduc object for t-SNE and add it to the Seurat object
+new_seurat_object[['tsne']] <- CreateDimReducObject(embeddings = tsne_embeddings, key = 'tSNE_', assay = 'RNA')
+
+# Use t-SNE results in scDEED
+resu1 <- scDEED(new_seurat_object, K = 50, reduction.method = 'tsne', perplexity = GCP, rerun = FALSE)
+
+# Extract results from scDEED
+resu1_full_results <- resu1$full_results
+
+# Extract and convert cell information from full_results
+gcells <- lapply(resu1_full_results[, c("dubious_cells", "trustworthy_cells", "intermediate_cells")], function(x) {
+  as.numeric(unlist(str_split(x, ",")))
+})
+
+# Convert the list to a data.table for further analysis
+gcells_dt <- data.table(
+  type = rep(names(gcells), sapply(gcells, length)),
+  CellId = unname(unlist(gcells))
+)
+
+# Get result summary
+result_summary <- gcells_dt[, .N, by = type]
+print(result_summary)
+
+# Calculate in/out ratio
+in_out_ratio <- result_summary[type == "trustworthy_cells", N] / 
+                (result_summary[type == "dubious_cells", N] + result_summary[type == "trustworthy_cells", N])
+print(paste("In-Out Ratio:", in_out_ratio))
+
+# Plotting: Highlight dubious and trustworthy cells using the t-SNE reduction
+# Adjust as necessary based on scDEED results
+dubious_cells <- gcells_dt[type == "dubious_cells", CellId]
+trustworthy_cells <- gcells_dt[type == "trustworthy_cells", CellId]
+
+# Plotting highlighted cells on t-SNE
+plot <- DimPlot(new_seurat_object, reduction = 'tsne', 
+                cells.highlight = list('dubious' = dubious_cells, 'trustworthy' = trustworthy_cells)) + 
+        scale_color_manual(values = c('gray', 'blue', 'red')) + 
+        ggtitle(paste("t-SNE Plot Highlighting Cells with Perplexity =", GCP))
+
+print(plot)
+
+```
+
+#calculate UMAP scDEED ratio
+```{r}
+set.seed(123)
+
+# Create a Seurat object
+new_seurat_object <- CreateSeuratObject(scale.data)
+LayerData(new_seurat_object, layer = 'scale.data', assay = 'RNA') <- scale.data
+VariableFeatures(new_seurat_object) <- Features(new_seurat_object)
+new_seurat_object <- RunPCA(new_seurat_object)
+
+# Extract UMAP embeddings
+umap_embeddings <- as.matrix(Y)
+colnames(umap_embeddings) <- c("UMAP_1", "UMAP_2")
+
+# Ensure the UMAP result has proper row names
+seurat_cells <- colnames(new_seurat_object)
+rownames(umap_embeddings) <- seurat_cells
+
+# Create a DimReduc object for UMAP and add it to the Seurat object
+new_seurat_object[['umap']] <- CreateDimReducObject(embeddings = umap_embeddings, key = 'UMAP_', assay = 'RNA')
+
+# Use UMAP results in scDEED
+resu1 <- scDEED(new_seurat_object, K = 50, reduction.method = 'umap', perplexity = GCP, rerun = FALSE)
+
+# Extract results from scDEED
+resu1_full_results <- resu1$full_results
+
+# Extract and convert cell information from full_results
+gcells <- lapply(resu1_full_results[, c("dubious_cells", "trustworthy_cells", "intermediate_cells")], function(x) {
+  as.numeric(unlist(str_split(x, ",")))
+})
+
+# Convert the list to a data.table for further analysis
+gcells_dt <- data.table(
+  type = rep(names(gcells), sapply(gcells, length)),
+  CellId = unname(unlist(gcells))
+)
+
+# Get result summary
+result_summary <- gcells_dt[, .N, by = type]
+print(result_summary)
+
+# Calculate in/out ratio
+in_out_ratio <- result_summary[type == "trustworthy_cells", N] / 
+                (result_summary[type == "dubious_cells", N] + result_summary[type == "trustworthy_cells", N])
+print(paste("In-Out Ratio:", in_out_ratio))
+
+# Plotting: Highlight dubious and trustworthy cells using the UMAP reduction
+# Extract dubious and trustworthy cells to highlight in the plot
+dubious_cells <- gcells_dt[type == "dubious_cells", CellId]
+trustworthy_cells <- gcells_dt[type == "trustworthy_cells", CellId]
+
+# Plotting highlighted cells on UMAP
+plot <- DimPlot(new_seurat_object, reduction = 'umap', 
+                cells.highlight = list('dubious' = dubious_cells, 'trustworthy' = trustworthy_cells)) + 
+        scale_color_manual(values = c('gray', 'blue', 'red')) + 
+        ggtitle(paste("UMAP Plot Highlighting Cells with GCP =", GCP))
+
+print(plot)
+
+```
+
+#check the indices for trustworthy and dubious points
+```{r}
+length(dubious_cells)
+length(trustworthy_cells)
+
+print(dubious_cells)
+print(trustworthy_cells)
+```
+
+#find cell type distribution of scDEED result
+```{r}
+#find dubious cell type
+dubious_string <- resu1[["full_results"]][1,5] #originally 1,4, changed
+dubious_vector <- strsplit(dubious_string, ",")[[1]]
+dubious_vector <- as.numeric(dubious_vector)
+print(dubious_vector)
+
+dubious_cell_type <- cls[dubious_vector]
+print(dubious_cell_type)
+dubious_cell_type_counts <- as.data.frame(table(dubious_cell_type))
+print(dubious_cell_type_counts)
+
+ggplot(data = dubious_cell_type_counts, aes(x = dubious_cell_type, y = Freq, fill = dubious_cell_type)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = Freq), vjust = -0.3, color = "black", size = 3.5) + 
+  theme_minimal() +
+  labs(title = "Frequency of Dubious Cell Types", x = "Cell Type", y = "Frequency") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+
+
+
+
+#find trustworthy cell type
+trustworthy_string <- resu1[["full_results"]][1,4] #originally 1,5, changed
+trustworthy_vector <- strsplit(trustworthy_string, ",")[[1]]
+trustworthy_vector <- as.numeric(trustworthy_vector)
+print(trustworthy_vector)
+
+trustworthy_cell_type <- cls[trustworthy_vector]
+print(trustworthy_cell_type)
+trustworthy_cell_type_counts <- as.data.frame(table(trustworthy_cell_type))
+print(trustworthy_cell_type_counts)
+
+ggplot(data = trustworthy_cell_type_counts, aes(x = trustworthy_cell_type, y = Freq, fill = trustworthy_cell_type)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = Freq), vjust = -0.3, color = "black", size = 3.5) + 
+  theme_minimal() +
+  labs(title = "Frequency of Trustworthy Cell Types", x = "Cell Type", y = "Frequency") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+
+```
+
+#scDEED ratio barplot for cell type
+```{r}
+ratios <- trustworthy_cell_type_counts$Freq / (trustworthy_cell_type_counts$Freq + dubious_cell_type_counts$Freq)
+ratios
+ratio_data_frame <- data.frame(
+  cell_type = trustworthy_cell_type_counts$trustworthy_cell_type,
+  ratio = ratios,
+  trustworthy = trustworthy_cell_type_counts$Freq,
+  dubious = dubious_cell_type_counts$Freq
+)
+ratio_data_frame
+```
+
+#barplot for scDEED ratio per cell type
+```{r}
+# Load necessary library
+library(ggplot2)
+
+# Order the data frame by ratio in descending order
+ratio_data_frame2 <- ratio_data_frame[order(ratio_data_frame$ratio, decreasing = TRUE),]
+print(ratio_data_frame2)
+
+
+# Calculate expanded limits based on the ratio values
+expanded_min <- min(ratio_data_frame$ratio, na.rm = TRUE) * 0.9  # Adding some buffer by reducing the minimum by 10%
+expanded_max <- max(ratio_data_frame$ratio, na.rm = TRUE) * 1.1  # Increasing the maximum by 10%
+
+# Create the bar plot using coord_cartesian to adjust the y-axis view
+ggplot(ratio_data_frame2, aes(x = reorder(cell_type, -ratio), y = ratio, fill = cell_type)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = sprintf("%.3f", ratio)), vjust = -0.3, color = "black", size = 3.5) +
+  theme_minimal() +
+  labs(title = "Bar Plot of Cell Type Ratios", x = "Cell Type", y = "Ratio") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  coord_cartesian(ylim = c(expanded_min, expanded_max))
+
+
+```
+
+# Murine Intestinal Data ONLY: use entropy category to do barplot for scDEED ratio
+```{r}
+entropy_indices <- read.csv("intestinal_processed_entropy_values.csv", header = TRUE, stringsAsFactors = FALSE)
+
+# Ensure the category column is treated as a factor
+entropy_indices$category <- as.factor(entropy_indices$category)
+
+# Get indices for each category
+category_indices <- split(seq_len(nrow(entropy_indices)), entropy_indices$category)
+
+# Print indices for each category
+print(category_indices)
+
+boxplot_data <- data.frame(
+  local_stability = numeric(),
+  category = factor()
+)
+```
+```{r}
+# Calculate the ratio for each category
+ratios <- numeric(length(category_indices))  # To store ratios
+trustworthy_counts <- numeric(length(category_indices))  # Count trustworthy
+dubious_counts <- numeric(length(category_indices))  # Count dubious
+
+# Loop through each category and calculate ratios
+for (i in seq_along(category_indices)) {
+  indices <- category_indices[[i]]  # Get indices for the category
+  
+  # Count trustworthy and dubious
+  trustworthy_in_category <- sum(indices %in% trustworthy_cells)
+  dubious_in_category <- sum(indices %in% dubious_cells)
+  
+  trustworthy_counts[i] <- trustworthy_in_category
+  dubious_counts[i] <- dubious_in_category
+  
+  # Calculate ratio
+  total_in_category <- trustworthy_in_category + dubious_in_category
+  ratios[i] <- ifelse(total_in_category > 0, trustworthy_in_category / total_in_category, NA)
+}
+
+# Prepare data frame for plotting
+barplot_data <- data.frame(
+  category = as.factor(names(category_indices)),  # Use category names
+  ratio = ratios,
+  trustworthy = trustworthy_counts,
+  dubious = dubious_counts
+)
+
+# Plot the barplot
+library(ggplot2)
+ggplot(barplot_data, aes(x = category, y = ratio, fill = category)) +
+  geom_bar(stat = "identity") +
+  #geom_text(aes(label = sprintf("%.2f", ratio)), vjust = -0.5, size = 5) +
+  labs(
+    title = "Trustworthy Ratio by Category",
+    x = "Entropy Category",
+    y = "Ratio (#Trustworthy / (#Dubious + #Trustworthy))"
+  ) +
+  theme_minimal()
+
+```
+
+
+
+
+#check the distribution of dubious and trustworthy cells: 
+# 1. specifically for embryoid body umap random GCP=2000, check stability distribution of dubious cell
+```{r}
+#reload the data first and redo the data preprocessing
+#load(file.path("mouse_hema_tsne_random_p15_pc5_knnMat.RData")) #change as needed  
+
+stab.s = 0
+k = 50
+
+Y_combined <- data.frame(Y, cls)
+
+# Subset to keep dubious cell
+Y_combined <- Y_combined[dubious_vector,]
+Y <- Y_combined
+cls <- Y_combined$cls
+
+for (i in 1:30) {
+  knn.mat[[i]] <- knn.mat[[i]][dubious_vector, ]
+}
+
+data.denoise <- data.denoise[dubious_vector, ]
+
+dim1_num <- dim(knn.mat[[1]])[1]  
+dim2_num <- dim(knn.mat[[1]])[2]  
+
+for (j in 1:length(knn.mat)) { 
+  for (k in 1:dim1_num) {  
+    temp_list <- c()  
+    temp_count <- 0   
+    
+    for (x in 1:dim2_num) { 
+      if (knn.mat[[j]][k, x] %in% dubious_vector) {  
+        temp_count <- temp_count + 1
+        temp_list[temp_count] <- knn.mat[[j]][k, x]
+      }
+    }
+    
+    # Fill with NAs if the new row is shorter than dim2_num
+    if (length(temp_list) != dim2_num) {
+      temp_list <- c(temp_list, rep(NA, dim2_num - length(temp_list)))
+    }
+    
+    temp_list <- as.numeric(temp_list)
+    knn.mat[[j]][k, ] <- temp_list
+  }
+}
+
+
+N <- 30
+temp.out <- matrix(ncol = N, nrow = N)
+
+k = dim(knn.mat[[1]])[2]
+
+ for(i in 1:(N-1)){
+   for(j in (i+1):N){
+     temp=c()
+     for(mn in 1:dim(knn.mat[[1]])[1]){ 
+        temp[mn]=length(intersect(knn.mat[[i]][mn,1:k],knn.mat[[j]][mn,1:k]))/k  
+     }
+     temp.out[i,j]=median(temp)
+   }
+ }
+
+stab.s_dubious <- mean(temp.out, na.rm = TRUE)
+print(stab.s_dubious)
+
+
+#create a boxplot for stab.s
+temp_stab_list_dubious <- c()  
+temp_stab_list_count_dubious <- 1  
+for (i in 1:dim(temp.out)[1]) {  
+  for (j in 1:dim(temp.out)[2]) {  
+    if (!is.na(temp.out[i, j])) {
+      temp_stab_list_dubious[temp_stab_list_count_dubious] <- temp.out[i, j]
+      temp_stab_list_count_dubious <- temp_stab_list_count_dubious + 1  
+    }
+  }
+}
+print(temp_stab_list_dubious)
+boxplot(temp_stab_list_dubious, 
+        main = "Stability Score for Dubious Cell Type", 
+        ylab = "Scores")
+
+hist(temp_stab_list_dubious,
+     main = "Stability Score Distribution for Dubious Cell Type",
+     xlab = "stab.s score",
+     ylab = "Frequency")
+
+```
+# 2. specifically for embryoid body umap random GCP=2500, check stability distribution of trustworthy cell
+```{r}
+#reload the data first and redo the data preprocessing
+#load(file.path("mouse_hema_tsne_random_p15_pc5_knnMat.RData")) #change as needed  
+
+stab.s = 0
+k = 50
+
+Y_combined <- data.frame(Y, cls)
+Y_combined <- Y_combined[trustworthy_vector,]
+Y <- Y_combined
+cls <- Y_combined$cls
+
+for (i in 1:30) {
+  knn.mat[[i]] <- knn.mat[[i]][trustworthy_vector, ]
+}
+
+data.denoise <- data.denoise[trustworthy_vector, ]
+
+dim1_num <- dim(knn.mat[[1]])[1]  
+dim2_num <- dim(knn.mat[[1]])[2]  
+
+for (j in 1:30) { 
+  for (k in 1:dim1_num) {  
+    temp_list <- c()  
+    temp_count <- 0   
+    
+    for (x in 1:dim2_num) {  
+      if (knn.mat[[j]][k, x] %in% trustworthy_vector) {  
+        temp_count <- temp_count + 1
+        temp_list[temp_count] <- knn.mat[[j]][k, x]
+      }
+    }
+    
+    # Fill with NAs if the new row is shorter than dim2_num
+    if (length(temp_list) != dim2_num) {
+      temp_list <- c(temp_list, rep(NA, dim2_num - length(temp_list)))
+    }
+    
+    temp_list <- as.numeric(temp_list)
+    knn.mat[[j]][k, ] <- temp_list
+  }
+  print(j)
+}
+
+
+N <- 30
+temp.out <- matrix(ncol = N, nrow = N)
+
+k = dim(knn.mat[[1]])[2]
+
+ for(i in 1:(N-1)){
+   for(j in (i+1):N){
+     temp=c()
+     for(mn in 1:dim(knn.mat[[1]])[1]){ 
+        temp[mn]=length(intersect(knn.mat[[i]][mn,1:k],knn.mat[[j]][mn,1:k]))/k  
+     }
+     temp.out[i,j]=median(temp)
+   }
+   print(i)
+ }
+
+stab.s_trustworthy <- mean(temp.out, na.rm = TRUE)
+print(stab.s_trustworthy)
+
+
+#create a boxplot for stab.s
+temp_stab_list_trustworthy <- c()  
+temp_stab_list_count_trustworthy <- 1  
+for (i in 1:dim(temp.out)[1]) {  
+  for (j in 1:dim(temp.out)[2]) {  
+    if (!is.na(temp.out[i, j])) {
+      temp_stab_list_trustworthy[temp_stab_list_count_trustworthy] <- temp.out[i, j]
+      temp_stab_list_count_trustworthy <- temp_stab_list_count_trustworthy + 1  
+    }
+  }
+}
+print(temp_stab_list_trustworthy)
+boxplot(temp_stab_list_trustworthy, 
+        main = "Stability Score for Trustworthy Cell Type", 
+        ylab = "Scores")
+
+hist(temp_stab_list_trustworthy,
+     main = "Stability Score Distribution for Trustworthy Cell Type",
+     xlab = "stab.s score",
+     ylab = "Frequency")
+
+```
+# 3. draw histogram to see the overlap of dubious and trustworthy cells
+```{r}
+#histogram
+hist(temp_stab_list_trustworthy, col=rgb(1, 0, 0, 0.5),
+     xlim=c(min(c(temp_stab_list_trustworthy, temp_stab_list_dubious)), max(c(temp_stab_list_trustworthy, temp_stab_list_dubious))), 
+     main="Stability Score Distribution For ESC and CPs, and Other Cell Types", xlab="Stability Score", 
+     ylim=c(0, max(c(hist(temp_stab_list_trustworthy, plot=FALSE)$counts, hist(temp_stab_list_dubious, plot=FALSE)$counts))),
+     ylab="Stability Score Frequency")
+
+hist(temp_stab_list_dubious, col=rgb(0, 0, 1, 0.5), breaks=20, add=TRUE)  # Add=TRUE to overlay on the first histogram
+legend("topright", legend=c("ESP and CPs", "Other Cell Types"), fill=c(rgb(1, 0, 0, 0.5), rgb(0, 0, 1, 0.5)))
+
+#density plot
+
+# Calculate density for both data sets
+density1 <- density(temp_stab_list_trustworthy)
+density2 <- density(temp_stab_list_dubious)
+
+# Define the range for the Y-axis
+max_density <- max(c(density1$y, density2$y))
+new_max_density <- max_density * 1.2  # Increase the maximum Y value by 20%
+
+# Set plotting area to be square
+par(pty = "s")
+
+# Plot the first density curve with adjusted Y-axis, suppressing x-axis labels initially
+plot(density1, col=rgb(1, 0, 0, 0.5),
+     xlim=c(min(c(temp_stab_list_trustworthy, temp_stab_list_dubious)), max(c(temp_stab_list_trustworthy, temp_stab_list_dubious))),
+     ylim=c(0, new_max_density),  # Apply new Y-axis limits
+     main="Stability Score Density For ESC and CPs, and Other Cell Types",
+     xlab="Stability Score",
+     ylab="Density",
+     lwd=4,
+     xaxt='n')  # Suppress default x-axis labels
+
+# Add the second density curve
+lines(density2, col=rgb(0, 0, 1, 0.5), lwd=4)
+
+# Add the legend with smaller text size
+legend("topright", legend=c("ESP and CPs", "Other Cell Types"),
+       col=c(rgb(1, 0, 0, 0.5), rgb(0, 0, 1, 0.5)), lwd=2, cex=0.8)
+
+# Add custom x-axis with increments of 0.2
+axis(1, at=seq(0, 1, by=0.2), labels=seq(0, 1, by=0.2))  # Add tick marks and labels at increments of 0.2
+
+# Define x and y limits if needed
+x_limits <- range(c(temp_stab_list_trustworthy, temp_stab_list_dubious))
+y_max <- max(c(hist(temp_stab_list_trustworthy, plot=FALSE)$counts, 
+               hist(temp_stab_list_dubious, plot=FALSE)$counts))
+
+
+# Histogram of the trustworthy list
+hist(temp_stab_list_trustworthy, col=rgb(1, 0, 0, 0.5), xlim=x_limits,
+     main="Stability Score Distribution For Dubious Cell and Trustworthy Cell",
+     xlab="Stability Score", ylim=c(0, y_max),
+     ylab="Stability Score Frequency", breaks=20)
+
+# Overlay histogram of the dubious list
+hist(temp_stab_list_dubious, col=rgb(0, 0, 1, 0.5), add=TRUE)
+
+# Add legend
+legend("topright", legend=c("Trustworthy Cell", "Dubious Cell"), fill=c(rgb(1, 0, 0, 0.5), rgb(0, 0, 1, 0.5)))
+
+```
+# 4. apply two sample t test to dubious and trustworthy cell lists
+```{r}
+#test whether the two stability lists have equal variance (F test)
+# H0: equal variance; Ha: NOT equal variance
+var.test(temp_stab_list_trustworthy, temp_stab_list_dubious)
+
+# Welch's t-test. If reject H0, var.equal=FALSE; else var.equal=TRUE
+t_test_result <- t.test(temp_stab_list_trustworthy, temp_stab_list_dubious, var.equal = FALSE,conf.level = 0.99)
+print(t_test_result)
+```
+# 5. draw boxplots on the same plot
+```{r}
+
+boxplot_data <- data.frame(
+  Scores = c(temp_stab_list_trustworthy, temp_stab_list_dubious),
+  Group = factor(
+    c(rep("Trustworthy Cell", length(temp_stab_list_trustworthy)),
+      rep("Dubious Cell", length(temp_stab_list_dubious)))
+  )
+)
+
+# Load required libraries
+library(ggplot2)
+library(ggsignif)
+
+# Create the boxplot with significance tests
+ggplot(boxplot_data, aes(x = Group, y = Scores, fill = Group)) + 
+  geom_boxplot() +
+  geom_signif(comparisons = list(c("Trustworthy Cell", "Dubious Cell")),
+              map_signif_level = TRUE) +         #if 2 sample t test shows significance, = TRUE, else = FALSE
+  labs(title = "Comparison of Stability Scores",
+       y = "scDEED Score",
+       x = "") + 
+  scale_fill_manual(values = c("red", "blue"))
+
+
+```
+
+# 6. check in/out ratio for ALL data
+```{r}
+all_ratio <- length(trustworthy_vector) / (length(dubious_vector) +  length(trustworthy_vector))
+all_ratio
+```
+
+
+# 7. check ESC and CPs (stable cell type) trustworthy/(dubious+trustworthy) ratio (in/out ratio)
+```{r}
+#check the indices of ESC and CPs for embryoid body data
+esc_indices <- which(cls == "ESC")
+cp_indices <- which(cls == "CPs")
+esc_cp <- c(esc_indices,cp_indices)
+
+#extract the corresponding points from scDEED result column
+#dubious_vector; trustworthy_vector
+esc_cp_in_dubious <- intersect(esc_cp,dubious_vector)
+esc_cp_in_trustworthy <- intersect(esc_cp,trustworthy_vector)
+
+specific_cell_ratio <-  length(esc_cp_in_trustworthy) / (length(esc_cp_in_dubious) + length(esc_cp_in_trustworthy))
+print(length(esc_cp_in_trustworthy))
+print(length(esc_cp_in_dubious))
+print(specific_cell_ratio)
+
+
+#extract points that are not ESC/CPs from scDEED result column
+cls_list <- as.numeric(seq(1, length(cls)))
+other_indices <- cls_list[-esc_cp]
+other_in_dubious <- intersect(other_indices,dubious_vector)
+other_in_trustworthy <- intersect(other_indices,trustworthy_vector)
+
+other_cell_ratio <-  length(other_in_trustworthy) / (length(other_in_dubious) + length(other_in_trustworthy))
+print(length(other_in_trustworthy))
+print(length(other_in_dubious))
+print(other_cell_ratio)
+
+
+```
+
+
+
+
+#check the distribution of ESC and CPs(stable cell type) and Other Cells(unstable cell types):
+# 1. specifically for embryoid body umap random GCP=2000, average stability for other cell type (unstable)
+```{r}
+#reload the data first and redo the data preprocessing
+#load(file.path("mouse_hema_tsne_random_p15_pc5_knnMat.RData")) #change as needed  
+
+stab.s = 0
+k = 50
+Y_combined <- data.frame(Y, cls)
+
+# Find stable data rows
+specific_cls <- which(Y_combined$cls %in% c("ESC", "CPs"))
+
+# Subset to keep all unstable types by deleting stable types
+Y_combined <- subset(Y_combined, !(cls %in% c("ESC", "CPs")))
+Y <- Y_combined
+cls <- Y_combined$cls
+
+for (i in 1:30) {
+  knn.mat[[i]] <- knn.mat[[i]][-specific_cls, ]
+}
+
+data.denoise <- data.denoise[-specific_cls, ]
+
+dim1_num <- dim(knn.mat[[1]])[1]  
+dim2_num <- dim(knn.mat[[1]])[2]  
+
+for (j in 1:length(knn.mat)) { 
+  for (k in 1:dim1_num) {  
+    temp_list <- c()  
+    temp_count <- 0   
+    
+    for (x in 1:dim2_num) {  
+      if (!(knn.mat[[j]][k, x] %in% specific_cls)) {  
+        temp_count <- temp_count + 1
+        temp_list[temp_count] <- knn.mat[[j]][k, x]
+      }
+    }
+    
+    # Fill with NAs if the new row is shorter than dim2_num
+    if (length(temp_list) != dim2_num) {
+      temp_list <- c(temp_list, rep(NA, dim2_num - length(temp_list)))
+    }
+    
+    temp_list <- as.numeric(temp_list)
+    knn.mat[[j]][k, ] <- temp_list
+    
+    #print(paste("Matrix", j, "Row", k, "Processed."))
+  }
+}
+
+N <- 30
+temp.out <- matrix(ncol = N, nrow = N)
+k = dim(knn.mat[[1]])[2]
+
+for (i in 1:(N-1)) {
+  for (j in (i+1):N) {
+    temp <- c()
+    for (mn in 1:dim(knn.mat[[1]])[1]) {  
+      temp[mn] <- length(intersect(knn.mat[[i]][mn, 1:k], knn.mat[[j]][mn, 1:k])) / k  
+    }
+    temp.out[i, j] <- median(temp)
+  }
+  print(i)
+}
+
+stab.s <- mean(temp.out, na.rm = TRUE)
+print(stab.s)
+
+#create a boxplot for stab.s
+temp_stab_list <- c()  
+temp_stab_list_count <- 1  
+
+for (i in 1:dim(temp.out)[1]) {
+  for (j in 1:dim(temp.out)[2]) {
+    if (!is.na(temp.out[i, j])) {
+      temp_stab_list[temp_stab_list_count] <- temp.out[i, j]
+      temp_stab_list_count <- temp_stab_list_count + 1
+    }
+  }
+}
+
+print(temp_stab_list)
+
+boxplot(temp_stab_list,
+        main = "Stab.s for Other Unstable Cell Type",
+        ylab = "Scores")
+
+hist(temp_stab_list,
+     main = "Stability Score Distribution for Other Unstable Cell Type",
+     xlab = "stab.s score",
+     ylab = "Frequency")
+
+# Store data to try to compare results with previous results
+temp_stab_list_2 <- temp_stab_list
+cls_2 <- cls
+Y_2 <- Y
+Y_combined_2 <- Y_combined
+data_denoise_2 <- data.denoise
+knn.mat_2 <- knn.mat
+stab.s_2 <- stab.s
+```
+# 2. specifically for embryoid body umap random GCP=2500, average stability for 2 cell types (stable)
+```{r}
+#reload the data first and redo the data preprocessing
+#load(file.path("mouse_hema_tsne_random_p15_pc5_knnMat.RData")) #change as needed
+
+stab.s_1 = 0
+k = 50
+Y_combined <- data.frame(Y, cls)
+
+# Find rows that are not stable cell types
+specific_cell_type2 <- which(!(Y_combined$cls %in% c("ESC", "CPs")))
+
+# Subset to keep only stable cell types
+Y_combined <- subset(Y_combined, cls %in% c("ESC", "CPs"))
+Y <- Y_combined
+cls <- Y_combined$cls
+
+# Adjust knn.mat by removing rows corresponding to specific_cell_type2
+for (i in 1:30) {
+  knn.mat[[i]] <- knn.mat[[i]][-specific_cell_type2, ]
+}
+
+data.denoise <- data.denoise[-specific_cell_type2, ]
+
+dim1_num <- dim(knn.mat[[1]])[1]  
+dim2_num <- dim(knn.mat[[1]])[2]  
+
+for (j in 1:length(knn.mat)) {  
+  for (k in 1:dim1_num) {  
+    temp_list <- c()  
+    temp_count <- 0   
+    
+    for (x in 1:dim2_num) {  
+      if (!(knn.mat[[j]][k, x] %in% specific_cell_type2)) {  
+        temp_count <- temp_count + 1
+        temp_list[temp_count] <- knn.mat[[j]][k, x]
+      }
+    }
+    
+    # Fill with NAs if the new row is shorter than dim2_num
+    if (length(temp_list) != dim2_num) {
+      temp_list <- c(temp_list, rep(NA, dim2_num - length(temp_list)))
+    }
+    
+    temp_list <- as.numeric(temp_list)
+    knn.mat[[j]][k, ] <- temp_list
+    
+    #print(paste("Matrix", j, "Row", k, "Processed."))
+  }
+}
+
+N <- 30
+temp.out <- matrix(ncol = N, nrow = N)
+k = dim(knn.mat[[1]])[2]
+
+for (i in 1:(N-1)) {
+  for (j in (i+1):N) {
+    temp <- c()
+    for (mn in 1:dim(knn.mat[[1]])[1]) {
+      temp[mn] <- length(intersect(knn.mat[[i]][mn, 1:k], knn.mat[[j]][mn, 1:k])) / k
+      print(mn)
+    }
+    temp.out[i, j] <- median(temp)
+  }
+}
+
+stab.s <- mean(temp.out, na.rm = TRUE)
+print(stab.s)
+
+#create a boxplot for stab.s
+temp_stab_list <- c()
+temp_stab_list_count <- 1
+
+for (i in 1:dim(temp.out)[1]) {
+  for (j in 1:dim(temp.out)[2]) {
+    if (!is.na(temp.out[i, j])) {
+      temp_stab_list[temp_stab_list_count] <- temp.out[i, j]
+      temp_stab_list_count <- temp_stab_list_count + 1
+    }
+  }
+}
+
+print(temp_stab_list)
+
+boxplot(temp_stab_list,
+        main = "Boxplot of stab.s for Stable Cell Type",
+        ylab = "Values")
+
+hist(temp_stab_list,
+     main = "Stability Score Distribution for Stable Cell Type",
+     xlab = "stab.s score",
+     ylab = "Frequency")
+
+```
+# 3. draw histogram to see the overlap of stable and unstable cells
+```{r}
+#histogram
+hist(temp_stab_list, col=rgb(1, 0, 0, 0.5),
+     xlim=c(min(c(temp_stab_list, temp_stab_list_2)), max(c(temp_stab_list, temp_stab_list_2))), 
+     main="Stability Score Distribution For ESC and CPs, and Other Cell Types", xlab="Stability Score", 
+     ylim=c(0, max(c(hist(temp_stab_list, plot=FALSE)$counts, hist(temp_stab_list_2, plot=FALSE)$counts))),
+     ylab="Stability Score Frequency")
+
+hist(temp_stab_list_2, col=rgb(0, 0, 1, 0.5), breaks=20, add=TRUE)  # Add=TRUE to overlay on the first histogram
+legend("topright", legend=c("ESP and CPs", "Other Cell Types"), fill=c(rgb(1, 0, 0, 0.5), rgb(0, 0, 1, 0.5)))
+
+#density plot
+
+# Calculate density for both data sets
+density1 <- density(temp_stab_list)
+density2 <- density(temp_stab_list_2)
+
+# Set plotting area to be square
+par(pty = "s")
+
+# Plot the first density curve, suppressing the default x-axis labels
+plot(density1, col=rgb(1, 0, 0, 0.5), 
+     xlim=c(min(c(temp_stab_list, temp_stab_list_2)), max(c(temp_stab_list, temp_stab_list_2))),
+     main="Stability Score Density for ESC and CPs, and Other Cell Types", 
+     xlab="Stability Score", 
+     ylab="Density", 
+     lwd=2,
+     xaxt='n')  # Suppress default x-axis labels
+
+# Add the second density curve
+lines(density2, col=rgb(0, 0, 1, 0.5), lwd=2)
+
+# Add custom x-axis with increments of 0.2
+axis(1, at=seq(0, 1, by=0.2), labels=seq(0, 1, by=0.2))
+
+# Add the legend
+legend("topright", legend=c("ESP and CPs", "Other Cell Types"), 
+       col=c(rgb(1, 0, 0, 0.5), rgb(0, 0, 1, 0.5)), lwd=2, cex=0.7)
+
+# Define x and y limits for histogram
+x_limits <- range(c(temp_stab_list, temp_stab_list_2))
+y_max <- max(c(hist(temp_stab_list, plot=FALSE)$counts, 
+               hist(temp_stab_list_2, plot=FALSE)$counts))
+
+# Plot the histogram for the trustworthy list, suppressing default x-axis
+hist(temp_stab_list, col=rgb(1, 0, 0, 0.5), xlim=x_limits,
+     main="Stability Score Distribution for Unstable Cell and Stable Cell",
+     xlab="Stability Score", ylim=c(0, y_max),
+     ylab="Stability Score Frequency", breaks=20,
+     xaxt='n')  # Suppress default x-axis labels
+
+# Overlay histogram of the dubious list
+hist(temp_stab_list_2, col=rgb(0, 0, 1, 0.5), add=TRUE)
+
+# Add custom x-axis with increments of 0.2
+axis(1, at=seq(0, 1, by=0.2), labels=seq(0, 1, by=0.2))
+
+# Add legend for the histogram
+legend("topright", legend=c("Unstable Cell", "Stable Cell"), fill=c(rgb(1, 0, 0, 0.5), rgb(0, 0, 1, 0.5)), cex=0.8)
+
+```
+# 4. apply two sample t test to unstable and stable cell lists
+```{r}
+#test whether the two stability lists have equal variance (F test)
+# H0: equal variance; Ha: NOT equal variance
+var_test_result <- var.test(temp_stab_list, temp_stab_list_2) 
+print(var_test_result)
+
+# Welch's t-test
+# Welch's t-test. If reject H0, var.equal=FALSE; else var.equal=TRUE
+t_test_result <- t.test(temp_stab_list, temp_stab_list_2, var.equal = FALSE, conf.level = 0.99)
+print(t_test_result)
+
+```
+# 5. draw boxplots on the same plot
+```{r}
+boxplot_data <- data.frame(
+  Scores = c(temp_stab_list, temp_stab_list_2),
+  Group = factor(
+    c(rep("Ratio = 1 Cell", length(temp_stab_list)),
+      rep("Other Cell", length(temp_stab_list_2)))
+  )
+)
+
+# Create the boxplot with significance tests
+ggplot(boxplot_data, aes(x = Group, y = Scores, fill = Group)) +
+  geom_boxplot() +
+  geom_signif(comparisons = list(c("Ratio = 1 Cell", "Other Cell")),
+              map_signif_level = TRUE) +
+  labs(title = "Comparison of Stability Scores",
+       y = "scDEED Score",
+       x = "") +
+  scale_fill_manual(values = c("blue", "red"))
+
+```
+#find average stability for ESC+CPs and other cell
+```{r}
+print(mean(temp_stab_list))
+print(mean(temp_stab_list_2))
+```
+
+

@@ -1,0 +1,206 @@
+
+#R function (staSNE) for uMAP using pre-set nearest neighbor initialization
+```{R}
+#imput: GCP, data, cell_type, data.name, method
+#output: stability score list, cell type scatter plot, stability scatter plot, scores vs GCP plot,.
+
+#GCP: parameter list
+#data: preprocessed high dimensional data
+#rareness: TRUE or FALSE If TRUE, the algorithm will output rareness score. If FALSE, the algorithm will not output the rareness score. Default is FALSE.
+#cell_type: cell type list. If the user does not have cell type, set cell_type = "Null". Default is NULL.
+#method: "tsne" or "umap"
+#initialization: If initialization = 1, t-SNE uses pca = FALSE and UMAP uses init = "lvrandom". If initialization = 2, t-SNE uses pca = TRUE and UMAP uses init = "pca". Default is 1 (random initialization).
+#version 2.0: use findKNN instead of findKmknn
+
+# Load necessary libraries
+library(ggplot2)
+library(Rtsne)
+library(uwot)
+library(phateR)
+
+NESS <- function(GCP, data, cell_type = NULL, rareness = FALSE, data.name,
+                 method, initialization = 1, stability_threshold = 0.75) {
+    set.seed(123)
+    eg.v <- svds((data), k = 30)$d
+    pc <- max(which(eg.v[1:29] / eg.v[2:30] > 1.1))
+    svd.data <- svds(data, k = pc)
+    data.denoise <- svd.data$v %*% diag(svd.data$d)
+
+    N <- 30
+    k <- 50
+    global_stability <- c()
+    concord.s <- c() # To store concordance scores
+    sil.s <- c() # To store silhouette score
+    cor.s <- c() # To store correlation score
+    npurity.s <- c() # To store neighbor purity score
+    clisi.s <- c() # To store local simpson scores
+    plot_list_cell_type <- list()  # To store cell type plots
+    plot_list_stability <- list()  # To store stability plots
+    local_stability <- list()      # To store knn.score for each GCP iteration
+    metric_plots <- list()
+
+    # Determine initialization type for naming
+    init_type <- ifelse(initialization == 2, "PCA Initialization", "Random Initialization")
+
+    for (j in seq_along(GCP)) {
+        perp <- GCP[j]
+        set.seed(123 + j)
+        knn.mat <- list()
+
+        if (method == "tsne") {
+            for (i in seq_len(N)) {
+                set.seed(123 + i)
+                if (i == 1) {
+                    out <- Rtsne(data.denoise,
+                                 perplexity = perp,
+                                 check_duplicates = FALSE,
+                                 pca = (initialization == 2),
+                                 seed = 123)
+                    embedding <- out$Y
+                } else {
+                    init_embed <- embedding
+                    out <- Rtsne(data.denoise,
+                                 perplexity = perp,
+                                 check_duplicates = FALSE,
+                                 pca = (initialization == 2),
+                                 Y_init = init_embed,
+                                 seed = 123)
+                    embedding <- out$Y
+                }
+                knn.mat[[i]] <- findKNN(embedding, k = k)$index
+            }
+        } else if (method == "umap") {
+            for (i in seq_len(N)) {
+                set.seed(123 + i)
+                out <- uwot::umap(data.denoise,
+                                  n_neighbors = perp,
+                                  init = ifelse(initialization == 2, "pca", "lvrandom"),
+                                  n_threads = 1,
+                                  seed = 123 + i)
+                embedding <- out
+                knn.mat[[i]] <- findKNN(embedding, k = k)$index
+            }
+        } else if (method == "phateR") {
+            for (i in seq_len(N)) {
+                set.seed(123 + i)
+                out <- phate(data.denoise,
+                             ndim = 2,
+                             knn = perp,
+                             seed = 123 + i,
+                             verbose = TRUE)
+                embedding <- out$embedding
+                knn.mat[[i]] <- findKNN(embedding, k = 50)$index
+            }
+        }
+
+        Y <- embedding
+
+        # Accumulate neighbor counts (construct knn graph)
+        knn.graph <- matrix(0, nrow = nrow(knn.mat[[1]]), ncol = nrow(knn.mat[[1]]))
+        for (i in seq_len(N)) {
+            for (l in seq_len(nrow(knn.mat[[1]]))) {
+                knn.graph[l, knn.mat[[i]][l, 1:k]] <- knn.graph[l, knn.mat[[i]][l, 1:k]] + 1
+            }
+            knn.graph <- pmax(knn.graph, t(knn.graph))
+        }
+
+        # Compute knn.score using user-defined stability_threshold
+        knn.score <- sapply(seq_len(nrow(knn.mat[[1]])), function(i) {
+            quantile(knn.graph[i, knn.graph[i, ] != 0] / N, stability_threshold)
+        })
+        local_stability[[j]] <- knn.score
+
+        # Metrics depending on cell_type
+        if (!is.null(cell_type)) {
+            # LISI Score
+            meta_data <- data.frame(cell_type = cell_type)
+            lisi_scores <- compute_lisi(Y, meta_data, c("cell_type"))
+            clisi.s[j] <- mean(lisi_scores$cell_type, na.rm = TRUE)
+
+            # Silhouette Score
+            sil.s[j] <- mean(silhouette(as.numeric(cell_type), dist(Y))[, 3], na.rm = TRUE)
+
+            # Neighbor Purity
+            npurity_score <- neighborPurity(
+                x = Y,
+                clusters = as.numeric(cell_type),
+                k = k,
+                weighted = TRUE,
+                BNPARAM = KmknnParam(),
+                BPPARAM = SerialParam()
+            )
+            npurity.s[j] <- mean(npurity_score$purity, na.rm = TRUE)
+
+            # Plot by cell type
+            plot.data <- data.frame(dim1 = Y[, 1], dim2 = Y[, 2], cell_type = cell_type)
+            plot11 <- ggplot(plot.data, aes(dim1, dim2, colour = cell_type)) +
+                geom_point(size = 1) +
+                ggtitle(paste0(data.name, "_", method, "(", init_type, ")" , "_p", perp, "_pc", pc, "_colored by cell type"))
+            plot_list_cell_type[[j]] <- plot11
+        } else {
+            clisi.s[j] <- NA
+            sil.s[j] <- NA
+            npurity.s[j] <- NA
+        }
+
+        # Plot by stability
+        plot.data <- data.frame(dim1 = Y[, 1], dim2 = Y[, 2], knn_score = knn.score)
+        plot22 <- ggplot(plot.data, aes(dim1, dim2, colour = knn_score)) +
+            geom_point(size = 1) +
+            ggtitle(paste0(data.name, "_", method, "(", init_type, ")" , "_p", perp, "_pc", pc, "_colored by local stability score"))
+        plot_list_stability[[j]] <- plot22
+
+        # Stability metrics
+        global_stability[j] <- mean(knn.score, na.rm = TRUE)
+        cor.s[j] <- cor(dist(Y), dist(data.denoise), use = "complete.obs")
+    } # End of the for-loop over GCP
+
+    
+    # Build metric plots after the for-loop, using the fully populated vectors
+    if (!is.null(cell_type)) {
+        metric_plots[["Concordance"]] <- plot_improved(GCP, concord.s, "Concordance",
+            paste0(data.name, method, " - Concordance Score (", init_type, ")"))
+        metric_plots[["Silhouette"]] <- plot_improved(GCP, sil.s, "Silhouette Score",
+            paste0(data.name, method, " - Silhouette Score (", init_type, ")"))
+        metric_plots[["Correlation"]] <- plot_improved(GCP, cor.s, "Correlation Score",
+            paste0(data.name, method, " - Correlation Score (", init_type, ")"))
+        metric_plots[["Neighbor Purity"]] <- plot_improved(GCP, npurity.s, "Neighbor Purity",
+            paste0(data.name, method, " - Neighbor Purity Score (", init_type, ")"))
+        metric_plots[["LISI Score"]] <- plot_improved(GCP, clisi.s, "LISI Score",
+            paste0(data.name, method, " - LISI Score (", init_type, ")"))
+        metric_plots[["Global Stability"]] <- plot_improved(GCP, global_stability, "Global Stability",
+            paste0(data.name, method, " - Global Stability (", init_type, ")"))
+    } else {
+        metric_plots[["Concordance"]] <- plot_improved(GCP, concord.s, "Concordance",
+            paste0(data.name, method, " - Concordance Score (", init_type, ")"))
+        metric_plots[["Correlation"]] <- plot_improved(GCP, cor.s, "Correlation Score",
+            paste0(data.name, method, " - Correlation Score (", init_type, ")"))
+        metric_plots[["Global Stability"]] <- plot_improved(GCP, global_stability, "Global Stability",
+            paste0(data.name, method, " - Global Stability (", init_type, ")"))
+    }
+
+    # Return results
+    return(list(
+        local_stability = local_stability,
+        plot_list_cell_type = plot_list_cell_type,
+        plot_list_stability = plot_list_stability,
+        metric_plots = metric_plots  
+    ))
+}
+
+# Example usage (assuming 'plot_improved' is defined elsewhere)
+listGCP <- c(2, 30)
+result <- NESS(
+    GCP = listGCP,
+    data = scale.data,
+    cell_type = cls,
+    rareness = TRUE,
+    data.name = "mouse_hema",
+    method = "tsne",
+    initialization = 1,
+    stability_threshold = 0.75
+)
+
+result
+
+```

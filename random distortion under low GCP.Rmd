@@ -1,0 +1,679 @@
+
+```{r}
+data.name = "mouse_hema"
+```
+
+
+#random splitting
+# 1. real examples with label colors showing random splitting of samples under given low GCP (figure 2a)
+```{r}
+#tSNE
+set.seed(123)
+GCP = 150
+
+for(j in seq(1,80,20)){ 
+  set.seed(j)
+  knn.mat=list()
+  for(i in 1:N){  
+    out <- Rtsne(data.denoise, perplexity = GCP, check_duplicates = FALSE, pca=FALSE, seed = j)
+    knn.mat[[i]] = findKmknn(out$Y, k = 50)$index 
+    print(c(i,j))
+  }
+  Y=out$Y 
+  save(knn.mat, Y, file=paste0("random_splitting_",data.name,"_",j,"_tsne_random_p",GCP,"_pc", pc,"_knnMat.RData"))
+  
+}
+```
+
+```{r}
+#umap
+set.seed(123)
+GCP = 70
+
+for(j in seq(1,80,20)){ 
+  set.seed(j)
+  knn.mat=list()
+  for(i in 1:N){  
+    out = uwot::umap(data.denoise, n_neighbors = GCP, init = "lvrandom", n_threads = 1, seed = j)
+    knn.mat[[i]] = findKmknn(out, k = 50)$index
+    print(c(i, j))
+  }
+  Y = out
+  save(knn.mat, Y, file=paste0("random_splitting_",data.name,"_",j,"_umap_lvrandom_p",GCP,"_pc", pc,"_knnMat.RData"))
+  
+}
+```
+
+```{r}
+#phateR
+library(phateR)
+
+set.seed(123)
+GCP = 3
+
+for(j in seq(1,80,20)){ 
+  set.seed(j)
+  knn.mat=list()
+  for(i in 1:N){  
+      out <- phate(data.denoise, 
+             ndim = 2,              # The number of dimensions for embedding, similar to t-SNE
+             knn = GCP,              # Similar to "perplexity", controls the number of nearest neighbors
+             seed = j,            # Set the random seed for reproducibility
+             verbose = TRUE)        # Optional: prints updates during the computation
+
+    #knn.mat[[i]] = findKmknn(out, k = 50)$index
+    print(c(i, j))
+  }
+  
+  Y <- out$embedding
+  save(knn.mat, Y, file=paste0("random_splitting_",data.name,"_",j,"_phateR_random_p",GCP,"_pc", pc,"_knnMat.RData"))
+  
+}
+```
+
+```{r}
+global_stability=0
+
+for(jj in seq(1,80,20)){
+
+load(file.path("/Users/wgl/Desktop/t-SNE project code/code"
+,paste0("random_splitting_",data.name,"_",jj,"_tsne_random_p",GCP,"_pc", pc,"_knnMat.RData")))  
+  
+#load(file.path("/Users/wgl/Desktop/t-SNE project code/code"
+#,paste0("random_splitting_",data.name,"_",jj,"_umap_lvrandom_p",GCP,"_pc", pc,"_knnMat.RData")))  
+
+k=50  
+
+#accumulate neighbor counts (construct knn graph)
+knn.graph = matrix(0,ncol=dim(knn.mat[[1]])[1], nrow=dim(knn.mat[[1]])[1])
+for(i in 1:N){
+  for(j in 1:dim(knn.mat[[1]])[1]){  #number of rows in knn.mat[[1]]
+    knn.graph[j,knn.mat[[i]][j,1:k]]=knn.graph[j,knn.mat[[i]][j,1:k]]+1 #1:k -> retrieve k nearest neighbors
+  }
+  knn.graph <- Pmax(knn.graph, t(knn.graph)) #ensure if point A is a neighbor of B, B is also a neighbor of A
+}   
+
+knn.score=c()
+for(i in 1:dim(knn.mat[[1]])[1]){ #all points in the dataset
+  knn.score[i] = quantile(knn.graph[i,which(knn.graph[i,]!=0)]/N,0.75)
+}
+
+ plot.data=data.frame(dim1=Y[,1], dim2=Y[,2], cell_type=cls)
+ #pdf(paste0(data.name,"_p",perp,"_pc", pc,"_cls.pdf"))
+ plot11<-ggplot(plot.data, aes(dim1, dim2, colour = cell_type)) + geom_point(size = 1) 
+ print(plot11+ggtitle(paste0(data.name,"_p",GCP,"_pc", pc)))
+ #dev.off()
+ 
+ plot.data=data.frame(dim1=Y[,1], dim2=Y[,2], knn_score=knn.score)
+ plot.data[1,3]=0
+ plot.data[2,3]=1
+ #pdf(paste0(data.name,"_p",perp,"_pc", pc,"_score.pdf"))
+ plot22<-ggplot(plot.data, aes(dim1, dim2, colour = knn_score)) + geom_point(size = 1)
+ print(plot22+ggtitle(paste0(data.name,"_p",GCP,"_pc", pc)))
+ #dev.off()
+ 
+# For saving plot11
+ggsave(filename = paste0("random_splitting_",data.name,"_",jj,"_umap_lvrandom_p",GCP,"_pc", pc,"_cls.png"), plot = plot11, width = 8, height = 7, units = "in")
+# For saving plot22
+ggsave(filename = paste0("random_splitting_",data.name,"_",jj,"_umap_lvrandom_p",GCP,"_pc", pc,"_score.png"), plot = plot22, width = 8, height = 7, units = "in")
+}
+```
+
+
+
+#bad plot due to random distortion
+# 1. finding occasionally bad plot when the plot is supposedlyvery good
+```{r}
+set.seed(123)
+GCP = 15
+for(j in 1:4000){ 
+  knn.mat=list()
+    out <- Rtsne(data.denoise, perplexity = GCP, check_duplicates = FALSE,pca=FALSE,seed = j)
+    knn.mat = findKmknn(out$Y, k = 50)$index #改knn的k 
+    print(c(j))
+  Y=out$Y 
+  save(knn.mat, Y, file=paste0(data.name,"_bad_",j,"_tsne_random_p",GCP,"_pc", pc,"_knnMat.RData"))
+}
+```
+
+# 2. Evaluate Stability and Visualization
+```{r}
+knn.s = c()
+stab.s = c()
+concord.s = c()
+sil.s = c()
+cor.s = c()
+db.s = c()
+
+GCP = 15 #adjust as needed
+k = 50
+
+for (jj in 1:4000) {
+  load(file.path(paste0(data.name, "_bad_", jj, "_tsne_random_p", GCP, "_pc", pc, "_knnMat.RData")))
+  
+  knn.graph = matrix(0, ncol = dim(knn.mat)[1], nrow = dim(knn.mat)[1])
+  for (j in 1:dim(knn.mat)[1]) {
+    knn.graph[j, knn.mat[j, 1:k]] = knn.graph[j, knn.mat[j, 1:k]] + 1 
+  }
+  
+  knn.graph <- pmax(knn.graph, t(knn.graph)) 
+  
+  knn.score = c()
+  for (i in 1:dim(knn.mat)[1]) { 
+    knn.score[i] = quantile(knn.graph[i, which(knn.graph[i, ] != 0)], 0.75)
+  }
+  
+  plot.data = data.frame(dim1 = Y[, 1], dim2 = Y[, 2], cell_type = cls)
+  plot11 <- ggplot(plot.data, aes(dim1, dim2, colour = cell_type)) + geom_point(size = 1)
+  print(plot11 + ggtitle(paste0(data.name, "_p", GCP, "_pc", pc)))
+  
+  plot.data = data.frame(dim1 = Y[, 1], dim2 = Y[, 2], knn_score = knn.score)
+  plot.data[1, 3] = 0
+  plot.data[2, 3] = 1
+  plot22 <- ggplot(plot.data, aes(dim1, dim2, colour = knn_score)) + geom_point(size = 1)
+  print(plot22 + ggtitle(paste0(data.name, "_p", GCP, "_pc", pc)))
+  
+  # For saving plot11
+  ggsave(filename = paste0(data.name, "_bad_", jj, "_tsne_random_p", GCP, "_pc", pc, "_cls.png"), plot = plot11, width = 8, height = 7, units = "in")
+  # For saving plot22
+  ggsave(filename = paste0(data.name, "_bad_", jj, "_tsne_random_p", GCP, "_pc", pc, "_score.png"), plot = plot22, width = 8, height = 7, units = "in")
+  
+  knn.s[jj] = mean(knn.score)
+
+  knn.h = findKmknn(data.denoise, k = 100)$index
+  knn.l = findKmknn(Y, k = 100)$index
+  concord.score = c()
+  for (i in 1:dim(knn.h)[1]) {
+    concord.score[i] = length(intersect(knn.h[i, 1:100], knn.l[i, 1:100])) / 100
+  }
+  concord.s[jj] = mean(concord.score)
+  
+  sil.s[jj] = mean(silhouette(as.numeric(cls), dist(Y))[, 3])
+  cor.s[jj] = cor(dist(Y), dist(data.denoise))
+  db.s[jj] = 1 / index.DB(Y, cl = as.numeric(cls))$DB
+  
+  print(jj)
+}
+
+knn.s
+stab.s
+cor.s
+concord.s
+db.s
+sil.s
+
+plot(cor.s)
+plot(concord.s)
+plot(db.s)
+plot(sil.s)
+
+hist(cor.s)
+hist(concord.s)
+hist(db.s)
+hist(sil.s)
+
+```
+
+# 3. store stability evaluation to local computer
+```{r}
+df_cor.s <- as.data.frame(cor.s)
+df_concord.s <- as.data.frame(concord.s)
+df_db.s <- as.data.frame(db.s)
+df_sil.s <- as.data.frame(sil.s)
+
+df_cor.s_2 <- df_cor.s |> mutate(index = row_number()) |> select(index,cor.s) |> arrange(cor.s) |> head(10)
+df_cor.s_2
+df_concord.s_2 <- df_concord.s |> mutate(index = row_number()) |> select(index,concord.s) |> arrange(concord.s) |> head(10)
+df_concord.s_2
+df_db.s_2 <- df_db.s |> mutate(index = row_number()) |> select(index,db.s) |> arrange(db.s) |> head(10)
+df_db.s_2
+df_sil.s_2 <- df_sil.s |> mutate(index = row_number()) |> select(index,sil.s) |> arrange(sil.s) |> head(10)
+df_sil.s_2
+
+df_bind <- cbind(df_cor.s_2,df_concord.s_2,df_db.s_2,df_sil.s_2)
+View(df_bind)
+
+write.csv(df_cor.s, paste0(data.name, "_df_cor.s.csv"))
+write.csv(df_concord.s, paste0(data.name, "_df_concord.s.csv"))
+write.csv(df_db.s, paste0(data.name, "_df_db.s.csv"))
+write.csv(df_sil.s, paste0(data.name, "_df_sil.s.csv"))
+```
+
+#4. Load data for specific distorted plot and do further analysis:
+```{r}
+#load(file.path(paste0("new_1636_mouse_hema_tsne_random_p18_pc5_knnMat.RData")))  
+```
+
+# DBSCAN to see clusters
+```{r}
+dbscan_result <- dbscan(Y, eps = 3.5, MinPts = 5)
+
+df <- as.data.frame(Y)
+df$Cluster <- factor(dbscan_result$cluster)
+
+ggplot(df, aes(x = V1, y = V2, color = Cluster)) +
+  geom_point(size = 0.7) +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12)) +
+  labs(x = "Y[1]",y = "Y[2]",color = "Cluster",
+       title = "Ipsc Data DBSCAN Clustering Results") #+
+  #scale_color_manual(values = rainbow(length(unique(df$Cluster))))
+
+```
+
+# 5. overlap of nearest neighbors between high dim and low dim for bad data points.
+```{r}
+perp=15 # adjust as needed
+
+numeric_indices <- 1:nrow(Y)
+numeric_indices <- as.data.frame(numeric_indices)
+Y_new <- cbind(numeric_indices, Y, as.data.frame(cls))
+```
+
+# 6. Check whether the two parts should be neighbors to each other in High D
+```{r}
+# distance in high dim data (data.denoise)
+# Create an empty matrix to store distances
+distance_high <- matrix(nrow = nrow(data.denoise), ncol = nrow(data.denoise))
+# Loop over each pair of points
+for (a in 1:nrow(data.denoise)) {
+  for (b in 1:nrow(data.denoise)) {
+    temp_sum <- 0
+    # Sum the squared differences for each dimension
+    for (c in 1:ncol(data.denoise)) {
+      temp_sum <- temp_sum + (data.denoise[a, c] - data.denoise[b, c])^2
+    }
+    # Calculate the square root of the summed squared differences
+    distance_high[a, b] <- sqrt(temp_sum)
+  }
+}
+
+distance_high_top_50 <- matrix(nrow=nrow(data.denoise),ncol=51)
+for (i in 1:nrow(distance_high)) {
+  # Order the distances and select the top 50 smallest values
+  distance_high_top_50[i, ] <- order(distance_high[i, ])[1:51]
+}
+distance_high_top_50_final <- distance_high_top_50[,2:51]
+
+
+
+#small parts at the bottom, adjust as needed. This plot is specific for mouse hema seed = 1473
+# Part 1 ranges
+#x_low_1 <- -60
+#x_high_1 <- -28
+#y_low_1 <- -50
+#y_high_1 <- 20
+
+# Part 2 ranges
+#x_low_11 <- -28
+#x_high_11 <- -10
+#y_low_11 <- -50
+#y_high_11 <- 0
+
+# Part 3 ranges
+#x_low_111 <- -10
+#x_high_111 <- 0
+#y_low_111 <- -50
+#y_high_111 <- -7
+
+
+
+
+#x_low_1 <- -60
+#x_high_1 <- -15
+#y_low_1 <- -50
+#y_high_1 <- 50
+
+# Part 2 ranges
+#x_low_11 <- -15
+#x_high_11 <- -2
+#y_low_11 <- -25
+#y_high_11 <- 0
+
+
+
+
+
+x_low_1 <- 0
+x_high_1 <- 50
+y_low_1 <- -50
+y_high_1 <- -12
+
+indices_11 <- which(Y_new[, 2] >= x_low_1 & Y_new[, 2] <= x_high_1 & Y_new[, 3] >= y_low_1 & Y_new[, 3] <= y_high_1)
+#indices_111 <- which(Y_new[, 2] >= x_low_11 & Y_new[, 2] <= x_high_11 & Y_new[, 3] >= y_low_11 & Y_new[, 3] <= y_high_11)
+#indices_1111 <- which(Y_new[, 2] >= x_low_111 & Y_new[, 2] <= x_high_111 & Y_new[, 3] >= y_low_111 & Y_new[, 3] <= y_high_111)
+
+indices_1 <- c(indices_11)#, indices_111)#, indices_1111)
+
+filtered_matrix_1 <- distance_high_top_50_final[indices_1,]
+
+number_list_1 = c()
+for (i in 1:dim(filtered_matrix_1)[1]) {
+  for (j in 1:dim(filtered_matrix_1)[2]) {
+    if (!(filtered_matrix_1[i,j] %in% number_list_1)) {
+      number_list_1 <- c(number_list_1,filtered_matrix_1[i,j])  
+    }
+  }
+}
+
+
+unique_elements_1 <- number_list_1[!number_list_1 %in% indices_1]
+#unique_elements_1 <- number_list_1
+
+
+#large parts at the top PART1, adjust as needed
+# Define the ranges for each part
+#x_low_2 <- -10
+#x_high_2 <- 15
+#y_low_2 <- 25
+#y_high_2 <- 50
+
+#x_low_22 <- 15
+#x_high_22 <- 30
+#y_low_22 <- 17.5
+#y_high_22 <- 50
+
+#x_low_222 <- 30
+#x_high_222 <- 60
+#y_low_222 <- 0
+#y_high_222 <- 50
+
+
+
+
+#x_low_2 <- 30
+#x_high_2 <- 70
+#y_low_2 <- -50
+#y_high_2 <- 50
+
+#x_low_22 <- 5
+#x_high_22 <- 15
+#y_low_22 <- 10
+#y_high_22 <- 50
+
+#x_low_222 <- 15
+#x_high_222 <- 30
+#y_low_222 <- 0
+#y_high_222 <- 50
+
+
+
+x_low_2 <- -50
+x_high_2 <- 50
+y_low_2 <- 25
+y_high_2 <- 50
+
+x_low_22 <- -10
+x_high_22 <- 50
+y_low_22 <- 5
+y_high_22 <- 25
+
+indices_22 <- which(Y_new[, 2] >= x_low_2 & Y_new[, 2] <= x_high_2 & Y_new[, 3] >= y_low_2 & Y_new[, 3] <= y_high_2)
+indices_222 <- which(Y_new[, 2] >= x_low_22 & Y_new[, 2] <= x_high_22 & Y_new[, 3] >= y_low_22 & Y_new[, 3] <= y_high_22)
+#indices_2222 <- which(Y_new[, 2] >= x_low_222 & Y_new[, 2] <= x_high_222 & Y_new[, 3] >= y_low_222 & Y_new[, 3] <= y_high_222)
+
+indices_2 <- c(indices_22, indices_222)#, indices_2222)
+filtered_matrix_2 <- distance_high_top_50_final[indices_2,]
+
+
+number_list_2 = c()
+for (i in 1:dim(filtered_matrix_2)[1]) {
+  for (j in 1:dim(filtered_matrix_2)[2]) {
+    if (!(filtered_matrix_2[i,j] %in% number_list_2)) {
+      number_list_2 <- c(number_list_2,filtered_matrix_2[i,j])  
+    }
+  }
+}
+
+unique_elements_2 <- number_list_2[!number_list_2 %in% indices_2]
+#unique_elements_2 <- number_list_2
+
+length(unique_elements_1)
+length(unique_elements_2)
+length(intersect(unique_elements_1,unique_elements_2))
+```
+
+# 7. Plot the low-D neighbor & high-D neighbor in the small points in the figure.
+```{r}
+#small part at the bottom
+unique_elements_1_Y <- Y_new[unique_elements_1,]
+unique_elements_1_cls <- as.data.frame(cls)[unique_elements_1,]
+
+# Prepare plot data
+plot.data <- data.frame(dim1 = Y[,1], dim2 = Y[,2], cell_type = cls, neighbor = FALSE,original = FALSE)
+plot.data$neighbor[unique_elements_1] <- TRUE
+plot.data$original[indices_1] <- TRUE
+
+# Create ggplot
+plot11 <- ggplot(plot.data, aes(x = dim1, y = dim2)) +
+  geom_point(aes(color = cell_type), size = 0.5, alpha = 0.5) +  # Plot all points, semi-transparent
+  geom_point(data = subset(plot.data, neighbor), color = "red", size = 2, alpha = 0.5) +  # Highlight neighbors in red
+  geom_point(data = subset(plot.data, original), color = "blue", size = 2, alpha = 0.5) + # Highlight original in blue
+  ggtitle(paste0(data.name, "_p", perp, "_pc", pc)) +
+  theme_minimal()
+
+# Print the plot
+print(plot11 + ggtitle(paste0(data.name, "_p", perp, "_pc", pc)))
+
+
+#big part on the top
+unique_elements_2_Y <- Y_new[unique_elements_2,]
+unique_elements_2_cls <- as.data.frame(cls)[unique_elements_2,]
+
+
+plot.data2 <- data.frame(dim1 = Y[, 1], dim2 = Y[, 2], cell_type = cls, neighbor2 = FALSE, original = FALSE)
+#plot.data2$neighbor1[unique_elements_1] <- TRUE
+plot.data2$neighbor2[unique_elements_2] <- TRUE
+plot.data2$original[indices_2] <- TRUE
+
+# Create ggplot
+plot22 <- ggplot(plot.data2, aes(x = dim1, y = dim2)) +
+  geom_point(aes(color = cell_type), size = 0.5, alpha = 0.5) +  # Plot all points, semi-transparent
+  geom_point(data = subset(plot.data2, neighbor2), color = "red", size = 2, alpha = 0.5) +  # Highlight neighbors in red
+  geom_point(data = subset(plot.data2, original), color = "blue", size = 2, alpha = 0.5) + # Highlight original in blue
+  ggtitle(paste0(data.name, "_p", perp, "_pc", pc)) +
+  theme_minimal()
+
+# Print the plot
+print(plot22 + ggtitle(paste0(data.name, "_p", perp, "_pc", pc)))
+```
+
+#  check ipsc day tsne random (plot only day2) to see if it does split
+```{r}
+#load(file.path("/Users/wgl/Desktop/data",paste0(data.name,"_tsne_random_p",perp,"_pc", pc,"_knnMat.RData")))  
+
+knn.s=c()
+
+perp=10
+k=50  
+
+Y_combined <- data.frame(Y,cls)
+Y_combined <- subset(Y_combined, cls == "Day2")
+
+plot.data=data.frame(dim1=Y_combined[,1], dim2=Y_combined[,2], cell_type=Y_combined$cls)
+#pdf(paste0(data.name,"_p",perp,"_pc", pc,"_cls.pdf"))
+plot11<-ggplot(plot.data, aes(dim1, dim2, colour = cell_type)) + geom_point(size = 1) 
+print(plot11+ggtitle(paste0(data.name,"_p",perp,"_pc", pc)))
+#dev.off()
+
+```
+
+# 8. Comparison between High Dim Distance and Low Dim distance: 
+```{r}
+library(dplyr)
+set.seed(123)
+#low-D distance from ONE point to the random points from bad points pool
+bad_points_num <- 61
+random_bad_points <- sample(indices, bad_points_num) #randomly select some number of bad points
+
+#Y_index_list <- data.frame(index = 1:2730)  #create a dataframe of Y with index for each point to help identify.
+#Y_with_index <- cbind(Y_index_list,Y)
+#Y_without_random_bad_points_low <- Y_with_index[-random_bad_points,]
+#Y_only_random_bad_points_low <- Y_with_index[random_bad_points,]
+#Y_low_d_distance_matrix <- matrix(nrow=dim(Y_without_random_bad_points_low)[1],ncol=dim(Y_only_random_bad_points_low)[1])
+
+#calculate the low-Ddistance
+Y_low_d_distance_matrix <- matrix(0, nrow = nrow(Y), ncol = nrow(Y))
+for (i in 1:nrow(Y)) { 
+  for (j in 1:nrow(Y)) { 
+    # Calculate Euclidean distance between all points
+    Y_low_d_distance_matrix[i, j] <- sqrt((Y[i, 1] - Y[j, 1])^2 + (Y[i, 2] - Y[j, 2])^2) #euclidean distance
+  }
+}
+
+#excluding data points so that only distance between good points and bad points were remained, other entries are set to 0
+#the output matrix should be rows containing each good points, columns containing randomly selected bad points from indices.
+columns_to_zero_low <- setdiff(1:ncol(Y_low_d_distance_matrix), random_bad_points)
+Y_low_d_distance_matrix[, columns_to_zero_low] <- NA 
+Y_low_d_distance_matrix[indices,] <- NA
+
+#calculate the minimum distance for each good points to the randomly selected bad points pool.
+low_d_min_distance <- matrix(NA,nrow=nrow(Y),ncol=1)
+for (i in 1:nrow(Y)) {
+  low_d_min_distance[i, 1] <- min(Y_low_d_distance_matrix[i, ],na.rm=TRUE)
+}
+low_d_min_distance[indices,] <- 0
+low_d_min_distance <- as.data.frame(low_d_min_distance)
+numbers <- as.data.frame(list(seq(1, 2730)))
+low_d_min_distance <- cbind(numbers, low_d_min_distance)
+colnames(low_d_min_distance)[1] <- "index"
+
+low_d_min_distance_sorted <- arrange(low_d_min_distance, V1)
+
+#find the top 50 points that have the minimum distances
+low_d_min_distance_sorted2 <- subset(low_d_min_distance_sorted, low_d_min_distance_sorted[,2] != 0)
+top_50_low <- low_d_min_distance_sorted2[1:50, ]
+
+
+
+#same process applied to high dimensional data.
+Y_high_d_distance_matrix <- matrix(0, nrow = nrow(Y), ncol = nrow(Y))
+
+for (a in 1:nrow(Y)) {
+  for (b in 1:nrow(Y)) {
+    temp_sum <- 0
+    for (c in 1:(ncol(data.denoise))) {
+      temp_sum <- temp_sum + (data.denoise[,c][a] - data.denoise[,c][b])^2 
+    }
+    Y_high_d_distance_matrix[a,b] <- sqrt(temp_sum) #euclidian distance
+  }
+}
+
+columns_to_zero_high <- setdiff(1:ncol(Y_high_d_distance_matrix), random_bad_points)
+Y_high_d_distance_matrix[, columns_to_zero_high] <- NA 
+Y_high_d_distance_matrix[indices,] <- NA
+high_d_min_distance <- matrix(NA,nrow=nrow(Y),ncol=1)
+
+for (i in 1:nrow(Y)) {
+  high_d_min_distance[i, 1] <- min(Y_high_d_distance_matrix[i, ],na.rm=TRUE)
+}
+
+high_d_min_distance[indices,] <- 0
+high_d_min_distance <- as.data.frame(high_d_min_distance)
+numbers <- as.data.frame(list(seq(1, 2730)))
+high_d_min_distance <- cbind(numbers, high_d_min_distance)
+colnames(high_d_min_distance)[1] <- "index"
+
+high_d_min_distance_sorted <- arrange(high_d_min_distance, V1)
+high_d_min_distance_sorted2 <- subset(high_d_min_distance_sorted, high_d_min_distance_sorted[,2] != 0)
+top_50_high <- high_d_min_distance_sorted2[1:50, ]
+
+length(top_50_low[,1])
+length(top_50_high[,1])
+length(intersect(top_50_high[,1],top_50_low[,1]))
+
+length(low_d_min_distance_sorted2)
+length(high_d_min_distance_sorted2)
+length(intersect(low_d_min_distance_sorted2,high_d_min_distance_sorted2))
+
+```
+
+
+#specifically for mouse hema bad plot seed = 804, to highlight MO and NEU cell type
+```{r}
+# Initialize variables to store metrics as numbers (not lists)
+# Initialize variables to store metrics as numbers (not lists)
+knn.s = 0
+stab.s = 0
+concord.s = 0
+sil.s = 0
+cor.s = 0
+db.s = 0
+
+# Parameters
+GCP = 15  # Adjust as needed
+k = 50
+
+# Load the dataset for the specified index
+#load(file.path(paste0(data.name, "_bad_", jj, "_tsne_random_p", GCP, "_pc", pc, "_knnMat.RData")))
+
+# Construct the knn graph
+knn.graph = matrix(0, ncol = dim(knn.mat)[1], nrow = dim(knn.mat)[1])
+for (j in 1:dim(knn.mat)[1]) {
+  knn.graph[j, knn.mat[j, 1:k]] = knn.graph[j, knn.mat[j, 1:k]] + 1
+}
+knn.graph <- pmax(knn.graph, t(knn.graph))  # Make the graph symmetric
+
+# Calculate knn scores
+knn.score = c()
+for (i in 1:dim(knn.mat)[1]) {
+  knn.score[i] = quantile(knn.graph[i, which(knn.graph[i, ] != 0)], 0.75)
+}
+
+# Create plot data
+plot.data = data.frame(dim1 = Y[, 1], dim2 = Y[, 2], cell_type = cls)
+
+# Add a column to indicate whether a point is "MO" or "NEU"
+plot.data$highlight <- ifelse(plot.data$cell_type %in% c("MO", "NEU"), TRUE, FALSE)
+
+plot11 <- ggplot(plot.data, aes(dim1, dim2)) +
+  # Base layer: all points colored by cell type
+  geom_point(aes(colour = cell_type), size = 1) +
+  # Highlight layer: dashed outline for "MO" and "NEU"
+  geom_point(data = subset(plot.data, highlight == TRUE), aes(colour = cell_type), size = 2, shape = 21, stroke = 1.5) +
+  # Add dashed outlines (stroke)
+  scale_shape_manual(values = c(`Highlight` = 21)) +
+  # Add title and minimal theme
+  ggtitle(paste0(data.name, "_p", GCP, "_pc", pc)) 
+
+
+# Print the plot
+print(plot11)
+
+# Save the plot
+ggsave(
+  filename = paste0(data.name, "_bad_804_new_tsne_random_p15_pc", pc, "_highlight.png"),
+  plot = plot11, width = 8, height = 7, units = "in"
+)
+
+# Compute metrics
+knn.s = mean(knn.score)
+
+knn.h = findKmknn(data.denoise, k = 100)$index
+knn.l = findKmknn(Y, k = 100)$index
+
+concord.score = c()
+for (i in 1:dim(knn.h)[1]) {
+  concord.score[i] = length(intersect(knn.h[i, 1:100], knn.l[i, 1:100])) / 100
+}
+concord.s = mean(concord.score)
+
+sil.s = mean(silhouette(as.numeric(cls), dist(Y))[, 3])
+cor.s = cor(dist(Y), dist(data.denoise))
+db.s = 1 / index.DB(Y, cl = as.numeric(cls))$DB
+
+# Print metrics
+print(paste("Mean knn.s:", knn.s))
+print(paste("Concordance score:", concord.s))
+print(paste("Silhouette score:", sil.s))
+print(paste("Correlation score:", cor.s))
+print(paste("Davies-Bouldin index:", db.s))
+
+
+```
+

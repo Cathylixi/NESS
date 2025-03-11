@@ -1,0 +1,480 @@
+
+```{r}
+data.name = "mouse_hema"
+```
+
+#Evaluate Stability and Visualization for deleting unstable data 
+```{r}
+global_stability = c()
+stab.s = c()
+concord.s = c()
+sil.s = c()
+db.s = c()
+npurity.s = c()
+indices_not_to_keep_list <- c()
+
+GCP = 30  # Change as needed
+k = 50
+N = 30
+#counting_values <- c(0.04, 0.08, 0.12, 0.16)
+counting_values <- c(0.05, 0.1, 0.15, 0.2)
+
+for (counting in 1:4) {
+  counting_numb <- counting_values[counting]  # Percentage of data to delete
+
+  # Construct knn.graph
+  knn.graph <- matrix(0, ncol = dim(knn.mat[[1]])[1], nrow = dim(knn.mat[[1]])[1])
+  for (i in 1:N) {
+    for (j in 1:dim(knn.mat[[1]])[1]) {
+      knn.graph[j, knn.mat[[i]][j, 1:k]] <- knn.graph[j, knn.mat[[i]][j, 1:k]] + 1
+    }
+  }
+  knn.graph <- pmax(knn.graph, t(knn.graph))  # Make the graph symmetric
+
+  # Compute knn.score
+  knn.score <- c()
+  for (i in 1:dim(knn.mat[[1]])[1]) {
+    knn.score[i] <- quantile(knn.graph[i, which(knn.graph[i, ] != 0)] / N, 0.75)
+  }
+
+  # Calculate the number of points to delete
+  num_to_delete <- ceiling(counting_numb * length(knn.score))
+
+  # Sort indices by knn.score in ascending order
+  sorted_indices <- order(knn.score)
+
+  # Select exactly the top num_to_delete indices
+  indices_to_delete <- sorted_indices[1:num_to_delete]
+
+  # Identify indices to keep
+  indices_to_keep <- setdiff(seq_along(knn.score), indices_to_delete)
+  indices_to_keep <- sort(indices_to_keep)  # Ensure order is maintained
+
+  # Store the indices to delete
+  indices_not_to_keep_list <- append(indices_not_to_keep_list, list(indices_to_delete))
+
+  # Filter the data using indices_to_keep
+  filtered_knn.graph <- knn.graph[indices_to_keep, indices_to_keep]
+  new_Y <- Y[indices_to_keep, ]
+  filtered_df <- data.denoise[indices_to_keep, ]
+  new_cls <- as.data.frame(cls)
+  filtered_cls <- new_cls[indices_to_keep, ]
+
+  # Update knn.mat for the filtered data
+  new_df = list()
+  for (i in seq_along(knn.mat)) {
+    new_df[[i]] <- knn.mat[[i]][indices_to_keep, ]
+  }
+
+  knn.score <- knn.score[indices_to_keep]
+
+  # Plot filtered data
+  plot.data <- data.frame(dim1 = new_Y[, 1], dim2 = new_Y[, 2], cell_type = filtered_cls)
+  plot11 <- ggplot(plot.data, aes(dim1, dim2, colour = cell_type)) + geom_point(size = 1)
+  print(plot11)
+
+  plot.data <- data.frame(dim1 = new_Y[, 1], dim2 = new_Y[, 2], knn_score = knn.score)
+  plot22 <- ggplot(plot.data, aes(dim1, dim2, colour = knn_score)) +
+    geom_point(size = 1) +
+    scale_colour_gradient(limits = c(0, 1))
+  print(plot22)
+
+  # Check cell types for removed data
+  new_Y2 <- Y[indices_to_delete, ]
+  filtered_cls2 <- new_cls[indices_to_delete, ]
+  plot.data <- data.frame(dim1 = new_Y2[, 1], dim2 = new_Y2[, 2], cell_type = filtered_cls2)
+  plot33 <- ggplot(plot.data, aes(dim1, dim2, colour = cell_type)) + geom_point(size = 1)
+  print(plot33)
+
+  # Count the number of appearances for each cell type
+  count_table <- table(filtered_cls2)
+  sorted_count_table <- sort(count_table, decreasing = TRUE)
+
+  # Calculate stability metrics
+  global_stability[counting] <- mean(knn.score)
+
+  temp.out <- matrix(ncol = N, nrow = N)
+  for (i in 1:(N - 1)) {
+    for (j in (i + 1):N) {
+      temp <- c()
+      for (mn in 1:dim(new_df[[1]])[1]) {
+        temp[mn] <- length(intersect(new_df[[i]][mn, 1:k], new_df[[j]][mn, 1:k])) / k
+      }
+      temp.out[i, j] <- median(temp)
+    }
+  }
+  stab.s[counting] <- mean(temp.out, na.rm = TRUE)
+
+  # Evaluate true concordance
+  knn.h <- findKmknn(filtered_df, k = 100)$index
+  knn.l <- findKmknn(new_Y, k = 100)$index
+
+  concord.score <- c()
+  for (i in 1:dim(knn.h)[1]) {
+    concord.score[i] <- length(intersect(knn.h[i, 1:100], knn.l[i, 1:100])) / 100
+  }
+  concord.s[counting] <- mean(concord.score)
+
+  sil.s[counting] <- mean(silhouette(as.numeric(filtered_cls), dist(new_Y))[, 3])
+  db.s[counting] <- 1 / index.DB(new_Y, cl = as.numeric(filtered_cls))$DB
+
+  npurity_score <- neighborPurity(
+    x = new_Y,
+    clusters = as.numeric(filtered_cls),
+    k = 10,  # Adjust as needed
+    weighted = TRUE,
+    BNPARAM = KmknnParam(),
+    BPPARAM = SerialParam()
+  )
+  npurity.s[counting] <- mean(npurity_score$purity, na.rm = TRUE)
+}
+
+# Output the final metrics
+global_stability
+stab.s
+concord.s
+db.s
+sil.s
+npurity.s
+
+
+```
+
+#store unstable data indices to local for entropy analysis
+```{r}
+write.csv(indices_not_to_keep_list[[1]], paste0(data.name, "_unstable_4_p30_pc6.csv"), row.names = TRUE)
+write.csv(indices_not_to_keep_list[[2]], paste0(data.name, "_unstable_8_p30_pc6.csv"), row.names = TRUE)
+write.csv(indices_not_to_keep_list[[3]], paste0(data.name, "_unstable_12_p30_pc6.csv"), row.names = TRUE)
+#write.csv(indices_not_to_keep_list[[4]], paste0(data.name, "_unstable_16_p30_pc6.csv"), row.names = TRUE)
+```
+
+#draw comparison with plot before cutting threshold
+```{r}
+#load ALL data again
+
+
+global_stability_before = 0
+stab.s_before = 0
+concord.s_before = 0
+sil.s_before = 0
+db.s_before = 0
+npurity.s_before = 0
+
+# Step 1: Construct the knn graph matrix
+knn.graph = matrix(0, ncol = dim(knn.mat[[1]])[1], nrow = dim(knn.mat[[1]])[1])
+
+for (i in 1:N) {
+  for (j in 1:dim(knn.mat[[1]])[1]) {
+    knn.graph[j, knn.mat[[i]][j, 1:k]] = knn.graph[j, knn.mat[[i]][j, 1:k]] + 1
+  }
+}
+knn.graph <- pmax(knn.graph, t(knn.graph))
+
+# Step 2: Calculate knn scores
+knn.score = c()
+for (i in 1:dim(knn.mat[[1]])[1]) {
+  knn.score[i] = quantile(knn.graph[i, which(knn.graph[i, ] != 0)] / N, 0.75)
+}
+
+# Step 3: Plotting before deletion
+plot.data = data.frame(dim1 = Y[, 1], dim2 = Y[, 2], cell_type = cls)
+plot11 <- ggplot(plot.data, aes(dim1, dim2, colour = cell_type)) + geom_point(size = 1)
+print(plot11 + ggtitle(paste0(data.name, "_p", GCP, "_pc", pc)))
+
+plot.data = data.frame(dim1 = Y[, 1], dim2 = Y[, 2], knn_score = knn.score)
+plot.data[1, 3] = 0
+plot.data[2, 3] = 1
+plot22 <- ggplot(plot.data, aes(dim1, dim2, colour = knn_score)) + geom_point(size = 1) + scale_colour_gradient(limits = c(0, 1))
+print(plot22 + ggtitle(paste0(data.name, "_p", GCP, "_pc", pc)))
+
+# Optional: For saving the plots if needed
+# ggsave(filename = paste0(data.name, "_before_cutting_", counting_numb, "_tsne_random_p", GCP, "_pc", pc, "_cls.png"), plot = plot11, width = 8, height = 7, units = "in")
+# ggsave(filename = paste0(data.name, "_before_cutting_", counting_numb, "_tsne_random_p", GCP, "_pc", pc, "_score.png"), plot = plot22, width = 8, height = 7, units = "in")
+
+# Step 4: Calculate metrics before deleting any data
+
+# Global stability before deletion
+global_stability_before = mean(knn.score)
+
+# Stability score (stab.s) before deletion
+temp.out = matrix(ncol = N, nrow = N)
+for (i in 1:(N - 1)) {
+  for (j in (i + 1):N) {
+    temp = c()
+    for (mn in 1:dim(knn.mat[[1]])[1]) {
+      temp[mn] = length(intersect(knn.mat[[i]][mn, 1:k], knn.mat[[j]][mn, 1:k])) / k
+    }
+    temp.out[i, j] = median(temp)
+  }
+}
+stab.s_before = mean(temp.out, na.rm = TRUE)
+
+# Concordance score (concord.s) before deletion
+knn.h = findKmknn(data.denoise, k = 100)$index
+knn.l = findKmknn(Y, k = 100)$index
+concord.score = c()
+for (i in 1:dim(knn.h)[1]) {
+  concord.score[i] = length(intersect(knn.h[i, 1:100], knn.l[i, 1:100])) / 100
+}
+concord.s_before = mean(concord.score)
+
+# Silhouette score (sil.s) before deletion
+sil.s_before = mean(silhouette(as.numeric(cls), dist(Y))[, 3])
+
+# Davies-Bouldin index (db.s) before deletion
+db.s_before = 1 / index.DB(Y, cl = as.numeric(cls))$DB
+
+# Neighbor purity score (npurity.s) before deletion
+npurity_score <- neighborPurity(
+  x = Y,  # Note: `Y` is used because we're calculating before deleting any data
+  clusters = as.numeric(cls),
+  k = 10,
+  weighted = TRUE,
+  BNPARAM = KmknnParam(),
+  BPPARAM = SerialParam()
+)
+npurity.s_before <- mean(npurity_score$purity, na.rm = TRUE)
+
+# Output all calculated scores
+global_stability_before
+stab.s_before
+concord.s_before
+sil.s_before
+db.s_before
+npurity.s_before
+
+
+#lower 5 percent purity
+#sorted_purity <- sort(npurity_score$purity, decreasing = FALSE)
+#lower_5_percent_count <- ceiling(0.05 * length(sorted_purity))
+#lower_5_percent_purity <- sorted_purity[1:lower_5_percent_count]
+#npurity.s_before <- mean(lower_5_percent_purity, na.rm = TRUE)
+```
+
+#plot score differences
+```{r}
+#make table and histogram(spagetti plot) to compare
+threshold_1 <- c(global_stability[1],stab.s[1],concord.s[1],npurity.s[1])
+threshold_2 <- c(global_stability[2],stab.s[2],concord.s[2],npurity.s[2])
+threshold_3 <- c(global_stability[3],stab.s[3],concord.s[3],npurity.s[3])
+threshold_4 <- c(global_stability[4],stab.s[4],concord.s[4],npurity.s[4])
+#threshold_5 <- c(global_stability[5],stab.s[5],concord.s[5],db.s[5],sil.s[5],npurity.s[5])
+
+original <- c(global_stability_before,stab.s_before,concord.s_before,npurity.s_before)
+original
+
+names <- c("global_stability","stab.s","concord,s","npurity.s")
+
+comparison <- data.frame(names = names, original = original, threshold_1 = threshold_1, threshold_2=threshold_2,threshold_3=threshold_3,threshold_4=threshold_4) #,threshold_5=threshold_5
+comparison
+
+comparison_long <- reshape2::melt(comparison, id.vars = "names")
+comparison_long
+
+ggplot(comparison_long, aes(x = names, y = value, fill = variable)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.75), width = 0.7) +
+  labs(x = "Score Names", y = "Values", fill = "Condition") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+#plot relative score differences
+```{r}
+comparison <- data.frame(
+  names = c("global_stability", "stab.s", "concord.s", "npurity.s"),
+  original = original,
+  threshold_1 = threshold_1,
+  threshold_2 = threshold_2,
+  threshold_3 = threshold_3,
+  threshold_4 = threshold_4
+)
+
+# Calculate percentage increase for each threshold
+for(i in 3:ncol(comparison)) {
+  comparison[, i] <- (comparison[, i] - comparison$original) / comparison$original * 100
+}
+
+for (i in 1:nrow(comparison)) {
+  if (comparison$original[i] <= 0) {
+    comparison[i,3:6] <- -comparison[i,3:6]
+  }
+}
+  
+comparison <- comparison[, -2] 
+
+# Melt the data frame for plotting
+comparison_long <- reshape2::melt(comparison, id.vars = "names")
+
+# Determine dynamic range for y-axis
+min_val <- min(comparison_long$value, na.rm = TRUE)
+max_val <- max(comparison_long$value, na.rm = TRUE)
+breaks <- pretty(c(min_val, max_val), n = 5)  # Calculate pretty breaks around the data range
+
+ggplot(comparison_long, aes(x = names, y = value, fill = variable)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.75), width = 0.7) +
+  labs(x = "Score Names", y = "Percentage Increase", fill = "Condition") +
+  scale_y_continuous(
+    labels = scales::percent_format(scale = 1),
+    breaks = breaks
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+#make individual bar plot for each score
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(reshape2)
+
+# Prepare the data frame
+comparison <- data.frame(
+  names = c("global_stability", "stab.s", "concord.s", "npurity.s"),
+  original = original,
+  threshold_1 = threshold_1,
+  threshold_2 = threshold_2,
+  threshold_3 = threshold_3,
+  threshold_4 = threshold_4
+)
+
+# Calculate percentage increase for each threshold
+for (i in 3:ncol(comparison)) {
+  comparison[, i] <- (comparison[, i] - comparison$original) / comparison$original * 100
+}
+
+# Adjust values for cases where original is less than or equal to 0
+for (i in 1:nrow(comparison)) {
+  if (comparison$original[i] <= 0) {
+    comparison[i, 3:6] <- -comparison[i, 3:6]
+  }
+}
+
+# Remove the original column as it's no longer needed for plotting
+comparison <- comparison[, -2]
+
+# Melt the data frame for plotting
+comparison_long <- melt(comparison, id.vars = "names")
+
+# Function to create and display individual plots
+create_plot <- function(score_name) {
+  data_subset <- subset(comparison_long, names == score_name)
+  
+  # Determine y-axis limits specific to each plot
+  min_val <- min(data_subset$value, na.rm = TRUE)
+  max_val <- max(data_subset$value, na.rm = TRUE)
+  breaks <- pretty(c(min_val, max_val), n = 5)
+  
+  # Create the plot
+  ggplot(data_subset, aes(x = variable, y = value, fill = variable)) +
+    geom_bar(stat = "identity", position = position_dodge(width = 0.75), width = 0.7) +
+    labs(x = "Condition", y = "Percentage Increase", fill = "Condition", title = score_name) +
+    scale_y_continuous(
+      labels = scales::percent_format(scale = 1),
+      breaks = breaks
+    ) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+
+# Generate and print each plot separately
+plot_knn <- create_plot("global_stability")
+plot_stab <- create_plot("stab.s")
+plot_concord <- create_plot("concord.s")
+plot_npurity <- create_plot("npurity.s")
+
+# Display each plot one at a time
+print(plot_knn)
+print(plot_stab)
+print(plot_concord)
+print(plot_npurity)
+
+```
+
+
+
+#see stability score distribution
+```{r}
+knn.score
+hist(knn.score)
+hist(new_knn.score)
+```
+
+
+#USE results from entropy analysis: compare results with high entropy cell data to see whether they are the same data
+```{r}
+indices_1 <- unlist(indices_not_to_keep_list[[1]])
+indices_2 <- unlist(indices_not_to_keep_list[[2]])
+indices_3 <- unlist(indices_not_to_keep_list[[3]])
+indices_4 <- unlist(indices_not_to_keep_list[[4]])
+
+#threshold 1
+cell_entropy_indices_1 <- read.csv("/Users/wgl/Desktop/data/ipsc_tsne_random_4%_p30_pc6_high_entropy_indices.csv")
+cell_entropy_indices_1 <- unlist(cell_entropy_indices_1$High.Entropy.Indices, use.names = FALSE)
+print(cell_entropy_indices_1)
+#threshold 2
+cell_entropy_indices_2 <- read.csv("/Users/wgl/Desktop/data/ipsc_tsne_random_8%_p30_pc6_high_entropy_indices.csv")
+cell_entropy_indices_2 <- unlist(cell_entropy_indices_2$High.Entropy.Indices, use.names = FALSE)
+print(cell_entropy_indices_2)
+#threshold 3
+cell_entropy_indices_3 <- read.csv("/Users/wgl/Desktop/data/ipsc_tsne_random_12%_p30_pc6_high_entropy_indices.csv")
+cell_entropy_indices_3 <- unlist(cell_entropy_indices_3$High.Entropy.Indices, use.names = FALSE)
+print(cell_entropy_indices_3)
+#threshold 4
+cell_entropy_indices_4 <- read.csv("/Users/wgl/Desktop/data/ipsc_tsne_random_16%_p30_pc6_high_entropy_indices.csv")
+cell_entropy_indices_4 <- unlist(cell_entropy_indices_4$High.Entropy.Indices, use.names = FALSE)
+print(cell_entropy_indices_4)
+
+print(length(indices_1))
+print(length(cell_entropy_indices_1))
+print(length(indices_2))
+print(length(cell_entropy_indices_2))
+print(length(indices_3))
+print(length(cell_entropy_indices_3))
+print(length(indices_4))
+print(length(cell_entropy_indices_4))
+
+
+#compare thresholds
+common_elements_1 <- intersect(indices_1, cell_entropy_indices_1)
+percentage_common_1 <- (length(common_elements_1) / length(indices_1)) * 100
+print(paste("For threshold 1, percentage of numbers that are the same:", percentage_common_1, "%"))
+
+common_elements_2 <- intersect(indices_2, cell_entropy_indices_2)
+percentage_common_2 <- (length(common_elements_2) / length(indices_2)) * 100
+print(paste("For threshold 2, percentage of numbers that are the same:", percentage_common_2, "%"))
+
+common_elements_3 <- intersect(indices_3, cell_entropy_indices_3)
+percentage_common_3 <- (length(common_elements_3) / length(indices_3)) * 100
+print(paste("For threshold 3, percentage of numbers that are the same:", percentage_common_3, "%"))
+
+common_elements_4 <- intersect(indices_4, cell_entropy_indices_4)
+percentage_common_4 <- (length(common_elements_4) / length(indices_4)) * 100
+print(paste("For threshold 4, percentage of numbers that are the same:", percentage_common_4, "%"))
+
+#see which cell types are these data and draw plots to double check
+common_elements_1_cls <- cls[common_elements_1]
+print(common_elements_1_cls)
+
+common_elements_2_cls <- cls[common_elements_2]
+print(common_elements_2_cls)
+
+common_elements_3_cls <- cls[common_elements_3]
+print(common_elements_3_cls)
+
+common_elements_4_cls <- cls[common_elements_4]
+print(common_elements_4_cls)
+
+df_table_1 <- as.data.frame(table(common_elements_1_cls))
+df_table_2 <- as.data.frame(table(common_elements_2_cls))
+df_table_3 <- as.data.frame(table(common_elements_3_cls))
+df_table_4 <- as.data.frame(table(common_elements_4_cls))
+
+names(df_table_1) <- c("Day", "Frequency for 4% threshold")
+names(df_table_2) <- c("Day", "Frequency for 8% threshold")
+names(df_table_3) <- c("Day", "Frequency for 12% threshold")
+names(df_table_4) <- c("Day", "Frequency for 16% threshold")
+
+df_summary <- Reduce(function(x, y) merge(x, y, by="Day", all=TRUE), list(df_table_1, df_table_2, df_table_3, df_table_4))
+print(df_summary)
+
+```

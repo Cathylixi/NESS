@@ -1,0 +1,284 @@
+
+```{r}
+data.name = "mouse_hema"
+```
+
+# Rareness for TSNE result under random distortion (Figure 3B)
+```{r}
+global_stability = c()
+stab.s = c()
+concord.s = c()
+sil.s = c()
+db.s = c()
+rare.s = c()
+
+#GCP = 18
+#load(file.path(paste0(data.name, "_bad_", jj, "_tsne_random_p", GCP, "_pc", pc, "_knnMat.RData")))
+
+k = 50  
+knn.graph = matrix(0, ncol = dim(knn.mat[[1]])[1], nrow = dim(knn.mat[[1]])[1])
+for (i in 1:N) {
+  for (j in 1:dim(knn.mat[[1]])[1]) {  
+    knn.graph[j, knn.mat[[i]][j, 1:k]] = knn.graph[j, knn.mat[[i]][j, 1:k]] + 1 
+  }
+  knn.graph <- pmax(knn.graph, t(knn.graph))  
+}
+
+knn.score = c()
+for (i in 1:dim(knn.mat[[1]])[1]) {  
+  knn.score[i] = quantile(knn.graph[i, which(knn.graph[i, ] != 0)] / N, 0.75)
+}
+
+plot.data = data.frame(dim1 = Y[, 1], dim2 = Y[, 2], cell_type = cls)
+plot11 <- ggplot(plot.data, aes(dim1, dim2, colour = cell_type)) + geom_point(size = 1)
+print(plot11 + ggtitle(paste0(data.name, "_p", GCP, "_pc", pc)))
+
+plot.data = data.frame(dim1 = Y[, 1], dim2 = Y[, 2], knn_score = knn.score)
+plot.data[1, 3] = 0
+plot.data[2, 3] = 1
+plot22 <- ggplot(plot.data, aes(dim1, dim2, colour = knn_score)) + geom_point(size = 1)
+print(plot22 + ggtitle(paste0(data.name, "_p", GCP, "_pc", pc)))
+
+global_stability = mean(knn.score)
+temp.out = matrix(ncol = N, nrow = N)
+
+for (i in 1:(N - 1)) {
+  for (j in (i + 1):N) {
+    temp = c()
+    for (mn in 1:dim(knn.mat[[1]])[1]) {
+      temp[mn] = length(intersect(knn.mat[[i]][mn, 1:k], knn.mat[[j]][mn, 1:k])) / k
+    }
+    temp.out[i, j] = median(temp)
+  }
+}
+
+stab.s = mean(temp.out, na.rm = TRUE)
+
+# Compute rareness
+rareness_mean = c()
+for (aa in 2:(N - 1)) {
+  rareness_mean[aa] = mean(c(temp.out[1:(aa - 1), aa], temp.out[aa, (aa + 1):N]))
+}
+rareness_mean[1] = mean(temp.out[1, 2:N])
+rareness_mean[N] = mean(temp.out[1:(N - 1), N])
+
+rareness_median = c()
+for (aa in 2:(N - 1)) {
+  rareness_median[aa] = median(c(temp.out[1:(aa - 1), aa], temp.out[aa, (aa + 1):N]))
+}
+rareness_median[1] = median(temp.out[1, 2:N])
+rareness_median[N] = median(temp.out[1:(N - 1), N])
+
+rareness_variance = c()
+for (aa in 2:(N - 1)) {
+  temp_list = c(temp.out[1:(aa - 1), aa], temp.out[aa, (aa + 1):N])
+  rareness_variance[aa] = sum((temp_list - rareness_mean[aa])^2) / length(temp_list)
+}
+rareness_variance[1] = sum((temp.out[1, 2:N] - rareness_mean[1])^2) / length(temp.out[1, 2:N])
+rareness_variance[N] = sum((temp.out[1:(N - 1), N] - rareness_mean[1])^2) / length(temp.out[1:(N - 1), N])
+
+rareness_outlier = c()
+for (aa in 2:(N - 1)) {
+  temp_list = c(temp.out[1:(aa - 1), aa], temp.out[aa, (aa + 1):N])
+  clean_list = temp_list[!is.na(temp_list) & !is.nan(temp_list)]
+  iqr_value = IQR(clean_list, na.rm = TRUE)
+  Q1 = quantile(clean_list, 0.25, na.rm = TRUE)
+  Q3 = quantile(clean_list, 0.75, na.rm = TRUE)
+  lower_bound = Q1 - 1.5 * iqr_value
+  upper_bound = Q3 + 1.5 * iqr_value
+  outliers = clean_list[clean_list < lower_bound | clean_list > upper_bound]
+  rareness_outlier[aa] = length(outliers)
+}
+iqr_value_1 = IQR(temp.out[1, 2:N])
+Q1_1 = quantile(temp.out[1, 2:N], 0.25)
+Q3_1 = quantile(temp.out[1, 2:N], 0.75)
+lower_bound_1 = Q1_1 - 1.5 * iqr_value_1
+upper_bound_1 = Q3_1 + 1.5 * iqr_value_1
+rareness_outlier[1] = length(temp.out[1, 2:N][temp.out[1, 2:N] < lower_bound | temp.out[1, 2:N] > upper_bound])
+
+iqr_value_N = IQR(temp.out[1:(N - 1), N])
+Q1_N = quantile(temp.out[1:(N - 1), N], 0.25)
+Q3_N = quantile(temp.out[1:(N - 1), N], 0.75)
+lower_bound_N = Q1_N - 1.5 * iqr_value_1
+upper_bound_N = Q3_N + 1.5 * iqr_value_1
+rareness_outlier[N] = length(temp.out[1:(N - 1), N][temp.out[1:(N - 1), N] < lower_bound | temp.out[1:(N - 1), N] > upper_bound])
+
+# Evaluate true concordance
+knn.h = findKmknn(data.denoise, k = 100)$index
+knn.l = findKmknn(Y, k = 100)$index
+concord.score = c()
+for (i in 1:dim(knn.h)[1]) {
+  concord.score[i] = length(intersect(knn.h[i, 1:100], knn.l[i, 1:100])) / 100
+}
+concord.s = mean(concord.score)
+
+sil.s = mean(silhouette(as.numeric(cls), dist(Y))[, 3])
+db.s = 1 / index.DB(Y, cl = as.numeric(cls))$DB
+tau.s = tau.fun(Y[, 1], Y[, 2], cls)
+
+global_stability
+stab.s
+rare.s
+concord.s
+sil.s
+db.s
+```
+
+#30 single iteration grouped together (example data: mouse_hema GCP=15, plot 804) to compare
+```{r}
+stab.s = c()
+rare.s = c()
+store_temp_out = c()
+
+GCP = 15
+k = 50
+N = 30
+
+combined_dataset <- list()
+combined_Y <- list()
+
+for (jjj in 1:N) {
+  jjj_2 <- jjj+790
+  load(file.path(paste0(data.name, "_bad_", jjj_2, "_tsne_random_p", GCP, "_pc", pc, "_knnMat.RData")))
+  combined_dataset[[jjj]] <- knn.mat
+  combined_Y[[jjj]] <- Y
+  print(jjj)
+  print(jjj_2)
+}
+
+knn.graph = matrix(0, ncol = dim(combined_dataset[[1]])[1], nrow = dim(combined_dataset[[1]])[1])
+for (i in 1:N) {
+  for (j in 1:dim(combined_dataset[[1]])[1]) {  
+    knn.graph[j, combined_dataset[[i]][j, 1:k]] = knn.graph[j, combined_dataset[[i]][j, 1:k]] + 1  
+  }
+  knn.graph <- pmax(knn.graph, t(knn.graph)) 
+}
+
+knn.score = c()
+for (i in 1:dim(combined_dataset[[1]])[1]) {  
+  knn.score[i] = quantile(knn.graph[i, which(knn.graph[i, ] != 0)] / N, 0.75)
+}
+
+for (jjj in 1:N) {
+  plot.data = data.frame(dim1 = combined_Y[[jjj]][, 1], dim2 = combined_Y[[jjj]][, 2], cell_type = cls)
+  plot11 <- ggplot(plot.data, aes(dim1, dim2, colour = cell_type)) + geom_point(size = 1)
+  print(plot11 + ggtitle(paste0(jjj, "_", data.name, "_p", GCP, "_pc", pc)))
+}
+
+global_stability = mean(knn.score)
+
+temp.out = matrix(ncol = N, nrow = N)
+
+for (i in 1:(N - 1)) {
+  for (j in (i + 1):N) {
+    temp = c()
+    for (mn in 1:dim(combined_dataset[[1]])[1]) {
+      temp[mn] = length(intersect(combined_dataset[[i]][mn, 1:k], combined_dataset[[j]][mn, 1:k])) / k
+    }
+    temp.out[i, j] = median(temp)
+  }
+}
+
+stab.s = mean(temp.out, na.rm = TRUE)
+
+rareness_mean = c()
+for (aa in 2:(N - 1)) {
+  rareness_mean[aa] = mean(c(temp.out[1:(aa - 1), aa], temp.out[aa, (aa + 1):N]))
+}
+rareness_mean[1] = mean(temp.out[1, 2:N])
+rareness_mean[N] = mean(temp.out[1:(N - 1), N])
+
+rareness_median = c()
+for (aa in 2:(N - 1)) {
+  rareness_median[aa] = median(c(temp.out[1:(aa - 1), aa], temp.out[aa, (aa + 1):N]))
+}
+rareness_median[1] = median(temp.out[1, 2:N])
+rareness_median[N] = median(temp.out[1:(N - 1), N])
+
+rareness_variance = c()
+for (aa in 2:(N - 1)) {
+  temp_list = c(temp.out[1:(aa - 1), aa], temp.out[aa, (aa + 1):N])
+  rareness_variance[aa] = sum((temp_list - rareness_mean[aa])^2) / length(temp_list)
+}
+rareness_variance[1] = sum((temp.out[1, 2:N] - rareness_mean[1])^2) / length(temp.out[1, 2:N])
+rareness_variance[N] = sum((temp.out[1:(N - 1), N] - rareness_mean[1])^2) / length(temp.out[1:(N - 1), N])
+
+
+# Quantile of rareness, see if the plot belongs to the top 5 most different plots
+# rare.s = sort(rareness)[1:5]
+# rare.s = rareness
+
+
+```
+
+#plot rareness
+```{r}
+
+hist(rareness_mean)
+hist(rareness_variance)
+
+plot(rareness_mean)
+plot(rareness_variance)
+
+plot(rareness_mean,rareness_variance)
+```
+
+```{r}
+# Plotting the initial scatter plot
+plot(rareness_mean, rareness_variance,
+     pch = 19,              # Use solid circle
+     cex = 0.7,             # Slightly larger point size for better visibility
+     col = "black",          # Change color to blue for better contrast
+     xlab = "Mean of Rareness",  # Label for x-axis
+     ylab = "Variance of Rareness", # Label for y-axis
+     main = "Plot of Rareness Mean vs Variance", # Add a title to the plot
+     las = 1,               # Axis labels are perpendicular to axis
+     xlim = c(0.81, 0.88),  # Set limits for x-axis
+     ylim = c(0.0005, 0.002)    # Set limits for y-axis
+)
+
+# Highlight the 14th point
+points(rareness_mean[14], rareness_variance[14], pch = 19, cex = 1.2, col = "red")
+
+# Optionally, add a text label
+text(rareness_mean[14], rareness_variance[14], labels = "bad", pos = 4, cex = 0.8, col = "red")
+
+```
+
+```{r}
+sqrt_df <- 1/sqrt(rareness_mean^2 + rareness_variance^2)
+
+# Create a plot of sqrt_df
+plot(sqrt_df, 
+     pch = 19,  # Point type: solid circle
+     cex = 0.7,
+     col = "black",  # Color of the points and lines
+     xlab = "Index",  # X-axis label
+     ylab = "Distance from Origin",  # Y-axis label
+     main = "Euclidean Distance from Origin for Each Point",  # Title of the plot
+     las = 1  # Axis labels are perpendicular to axis
+)
+
+# Highlight the 14th point
+points(14, sqrt_df[14], pch = 19, cex = 1.2, col = "red")  # Enlarge and color the 14th point
+text(14, sqrt_df[14], labels = "bad", pos = 3, cex = 0.8, col = "red")  # Add a label above the point
+
+```
+
+```{r}
+# Create the boxplot
+boxplot(sqrt_df,
+        main = "Boxplot of Euclidean Distances from Origin",
+        ylab = "Distance from Origin",
+        outline = TRUE  # Include outliers
+)
+
+# Highlight the 14th data point in the boxplot
+# Assume 'sqrt_df' is sorted or the 14th point is specifically interesting
+points(x = 1, y = sqrt_df[14], col = "red", pch = 19, cex = 1.2)  # Add a red point
+
+# Optionally, add a label to the highlighted point
+text(x = 1, y = sqrt_df[14], labels = paste("Point 14: ", round(sqrt_df[14], 2)), pos = 3, cex = 0.8, col = "red")
+
+```
+
