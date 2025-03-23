@@ -88,7 +88,7 @@ levels(cls)
 library(SummarizedExperiment)
 library(zellkonverter)
 
-sce <- readH5AD("ipsc.h5ad")
+sce <- readH5AD("../Data/ipsc.h5ad")
 sce
 
 expression_data <- assay(sce, "X")
@@ -102,12 +102,13 @@ cls <- as.factor(cls$cell_type)
 
 data.name = "ipsc"
 ```
+
 ```{r}
 #ipsc csv from Python
 data.name = "ipsc"
-data <- read.csv("ipsc_data.csv")
+data <- read.csv("./Data/ipsc_data.csv")
 scale.data <- as.matrix(t(data))
-cls <- read.csv("ipsc_cls.csv")
+cls <- read.csv("./Data/ipsc_cls.csv")
 cls <- as.factor(cls$cls)
 print(data)
 print(cls)
