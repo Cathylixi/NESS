@@ -1,0 +1,94 @@
+
+#t-SNE spectral
+```{r}
+library(Rtsne)
+library(BiocNeighbors)
+library(Matrix)
+library(irlba)
+
+GCP = c(15,70)
+
+# Compute spectral embedding
+get_spectral_init <- function(X, dims = 2) {
+  # Step 1: Compute similarity matrix (use Euclidean distance here)
+  dist_mat <- as.matrix(dist(X))
+  sigma <- median(dist_mat)  # bandwidth parameter for Gaussian kernel
+  sim_mat <- exp(-dist_mat^2 / (2 * sigma^2))
+
+  # Step 2: Compute Laplacian
+  D <- diag(rowSums(sim_mat))
+  L <- D - sim_mat
+
+  # Step 3: Compute bottom eigenvectors of Laplacian (ignore first eigenvector = trivial one)
+  eig <- irlba(L, nv = dims + 1)  # +1 to skip the trivial eigenvector
+  spectral_embedding <- eig$u[, 2:(dims + 1)]  # skip the first one
+  return(spectral_embedding)
+}
+
+set.seed(123)
+for(j in 1:length(GCP)) { 
+  perp = GCP[j]
+  set.seed(123)
+  knn.mat = list()
+  
+  # Spectral init computed once per j
+  Y_init = get_spectral_init(data.denoise, dims = 2)
+
+  for(i in 1:N) {  
+    out <- Rtsne(data.denoise, 
+                 perplexity = perp, 
+                 check_duplicates = FALSE, 
+                 pca = FALSE, 
+                 Y_init = Y_init, 
+                 verbose = TRUE)
+    
+    knn.mat[[i]] = findKmknn(out$Y, k = 50)$index
+    print(c(i, j))
+  }
+  
+  Y = out$Y 
+  save(knn.mat, Y, file = paste0("03.22_",data.name, "_tsne_Spectral_p", perp, "_pc", pc, "_knnMat.RData"))
+}
+```
+
+#UMAP spectral
+```{r}
+library(uwot)
+library(BiocNeighbors)
+
+GCP = c(2, 3, 4, 6, 7, 8, 9, 12, 700, 1000, 1200, 1500, 1700)
+
+set.seed(123)  
+runtime.list <- list()  
+
+for (j in 1:length(GCP)) {
+  perp = GCP[j]
+  set.seed(123)
+  knn.mat = list() 
+  
+  start_time <- Sys.time()
+  
+  for (i in 1:N) {
+    set.seed(123 + i)
+    out = umap(
+      data.denoise,
+      n_neighbors = perp,
+      init = "spectral",        # <-- spectral init here
+      n_threads = 1,
+      seed = 123 + i
+    )
+    
+    knn.mat[[i]] = findKmknn(out, k = 50)$index
+    print(c(i, j))
+  }
+
+  Y = out
+  
+  end_time <- Sys.time()
+  runtime <- end_time - start_time
+  runtime.list[[j]] <- runtime
+  print(paste("Runtime for perplexity", perp, ":", runtime))
+  
+  save(knn.mat, Y, file = paste0("03.22_",data.name, "_umap_spectral_p", perp, "_pc", pc, "_knnMat_umap.RData"))
+}
+```
