@@ -1,0 +1,197 @@
+
+#saddlenode (from entropy paper)
+```{r}
+# Load the R.matlab package if not already loaded
+if (!requireNamespace("R.matlab", quietly = TRUE)) {
+  install.packages("R.matlab")
+}
+library(R.matlab)
+
+# Path to the .mat file
+file_path <- "/Users/wgl/Desktop/saddlenode.mat"  # Replace with your file path
+
+# Load the .mat file
+saddle_data <- readMat(file_path)
+
+# Inspect the contents of the loaded .mat file
+str(saddle_data)
+
+```
+
+```{r}
+# Access the main data variables
+cell_gene_matrix <- saddle_data$data              # 2000 x 1 matrix (cell × feature matrix)
+lambda_out <- saddle_data$lambda.out             # [1 x 600001] array
+sample_id <- saddle_data$sample.id               # [1 x 600001] integer array
+t_out <- saddle_data$t.out                       # [1 x 600001] time points
+t_out_sample <- saddle_data$t.out.sample         # [1 x 4000] sampled time points
+x_out <- saddle_data$x.out                       # [1 x 600001] simulation trajectory
+x_out_sample <- saddle_data$x.out.sample         # [1 x 4000] sampled simulation trajectory
+sigma <- saddle_data$sigma                       # Noise level (single value)
+
+```
+
+```{r}
+# Subsample every other point
+sub_sample_id <- seq(1, length(saddle_data$x.out.sample), by = 2)
+
+# Subsampled data (cell × feature matrix)
+scale.data <- saddle_data$x.out.sample[sub_sample_id]
+
+data.denoise <- as.matrix(scale.data)
+
+# Labels (time points) for each subsampled point
+cls <- saddle_data$t.out.sample[sub_sample_id]
+
+set.seed(1)
+k <- 5
+cluster_labels <- kmeans(as.numeric(cls), centers = k)$cluster
+cls <- as.factor(cluster_labels)
+
+data.name = "saddle"
+
+N=30
+pc=1
+
+```
+
+
+#simulated ring
+```{r}
+# our own generation of a set of 2000 points uniformly from a unit circle in 2D
+# dim = 2000*2; cell_type classification: continuous color.
+
+# Load necessary library
+library(ggplot2)
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Generate 2000 points uniformly distributed on the unit circle
+n_points <- 2000
+theta <- sort(runif(n_points, 0, 2 * pi))  # Sorted angles for smoother transition
+x <- cos(theta)  # X-coordinates
+y <- sin(theta)  # Y-coordinates
+
+# Assign cell type sequentially from 1 to 2000
+cell_type <- 1:n_points
+
+# Normalize cell types between 0 and 1 for smooth color mapping
+#cell_type_norm <- (cell_type - min(cell_type)) / (max(cell_type) - min(cell_type)) * 10
+
+# Create a data frame
+circle_data <- data.frame(x = x, y = y, cell_type = cell_type_norm)
+scale.data <- as.matrix(data.frame(x=x,y=y))
+data.denoise <- scale.data
+cls <- cell_type
+
+# Plot using ggplot2 with continuous color transition
+ggplot(circle_data, aes(x = x, y = y, color = cell_type)) +
+  geom_point(size = 2) +
+  scale_color_gradientn(colors = c( "red", "blue", "purple", "red")) +  
+  #theme_minimal() +
+  labs(title = "Smoothly Colored Unit Circle",
+       color = "Cell Type") +
+  coord_fixed()  # Maintain aspect ratio
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+# Install NbClust package
+#install.packages("NbClust")
+
+# Load the package
+library(NbClust)
+
+
+# Estimate the number of clusters
+# Note: Since cell_gene_matrix is 1D, k-means won't work without additional features.
+# For demonstration, let's use another clustering method or preprocess the data.
+cluster_result <- NbClust(data = cell_gene_matrix, distance = "euclidean", min.nc = 2, max.nc = 10, method = "kmeans")
+
+# Plot EPI (Entropy Progress Indicator)
+plot(cluster_result$All.index, type = "b", xlab = "Number of Clusters", ylab = "EPI", main = "Cluster Estimation")
+
+```
+
+```{r}
+set.seed(42)  # For reproducibility
+k <- 2  # Number of clusters
+kmeans_result <- kmeans(cell_gene_matrix, centers = k)
+
+# Assign cluster labels
+cluster_labels <- kmeans_result$cluster
+
+
+print(kmeans_result)
+```
+
+```{r}
+library(ggplot2)
+
+# Create a data frame for plotting
+trajectory_data <- data.frame(
+  Time = as.vector(t_out_sample),
+  Expression = as.vector(x_out_sample)
+)
+
+# Plot gene expression trajectory
+ggplot(trajectory_data, aes(x = Time, y = Expression)) +
+  geom_line(size = 1) +
+  labs(title = "Gene Expression Trajectory", x = "Time", y = "Expression") +
+  theme_minimal()
+
+```
+
+```{r}
+# Example: Create a dummy transition matrix for visualization
+P_perm <- matrix(runif(100, 0, 1), nrow = 10)  # Replace with actual data
+
+# Heatmap of the transition matrix
+heatmap(P_perm, main = "Cell-Cell Transition Matrix", col = terrain.colors(256))
+
+```
+
+```{r}
+# Simulated example of rho_class
+rho_class <- data.frame(Time = 1:100, TCS = runif(100, 0, 1))  # Replace with actual data
+
+# Plot TCS
+ggplot(rho_class, aes(x = Time, y = TCS)) +
+  geom_line(size = 1) +
+  labs(title = "Transition Cell Score (TCS)", x = "Time", y = "TCS") +
+  theme_minimal()
+
+```
+
+
+
+
+
+
+
+
+
