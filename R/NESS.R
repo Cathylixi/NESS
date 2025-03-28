@@ -33,7 +33,7 @@
 #' @export
 
 
-NESS <- function(GCP = NULL, data, cell_type = NULL, rareness = FALSE, data.name = "sc_data",
+NESS <- function(GCP = NULL, data, cell_type = NULL, rareness = FALSE, data.name,
                  method = "tsne", initialization = 1, stability_threshold = 0.75, early_stop = TRUE) {
   set.seed(123)
   eg.v <- svds((data), k = 30)$d
@@ -48,33 +48,42 @@ NESS <- function(GCP = NULL, data, cell_type = NULL, rareness = FALSE, data.name
   N <- 30
   k <- 50
   global_stability <- c()
-  concord.s <- c() # To store concordance scores
-  sil.s <- c() # To store silhouette score
-  cor.s <- c() # To store correlation score
-  npurity.s <- c() # To store neighbor purity score
-  clisi.s <- c() # To store local simpson scores
   rare.mean <- c() # To store rareness score (mean)
   rare.var <- c() # To store rareness score (variance)
 
   plot_list_cell_type <- list()  # To store cell type plots
   plot_list_stability <- list()  # To store stability plots
   local_stability <- list()      # To store knn.score for each GCP iteration
-  metric_plots <- list()
 
   # Determine initialization type for naming
   init_type <- ifelse(initialization == 2, "PCA Initialization", "Random Initialization")
+
   prev_stability <- 0
 
+  tracking_GCP_length <- 0 #track how many GCP is being processed to avoid
+
+  distance_matrix <- as.matrix(dist(data.denoise, method = "euclidean"))
+  distance_matrix_phateR <- distance_matrix
+  diag(distance_matrix_phateR) <- 0
+
+
+
+
+
   for (j in seq_along(GCP)) {
+    tracking_GCP_length <- j #track current GCP index
+
     perp <- GCP[j]
     set.seed(123 + j)
     knn.mat <- list()
+    knn.info <- NULL
 
     if (method == "tsne") {
       for (i in seq_len(N)) {
         set.seed(123 + i)
         if (i == 1) {
-          out <- Rtsne(data.denoise,
+          out <- Rtsne(distance_matrix,
+                       is_distance = TRUE,
                        perplexity = perp,
                        check_duplicates = FALSE,
                        pca = (initialization == 2),
@@ -82,7 +91,8 @@ NESS <- function(GCP = NULL, data, cell_type = NULL, rareness = FALSE, data.name
           embedding <- out$Y
         } else {
           init_embed <- embedding
-          out <- Rtsne(data.denoise,
+          out <- Rtsne(distance_matrix,
+                       is_distance = TRUE,
                        perplexity = perp,
                        check_duplicates = FALSE,
                        pca = (initialization == 2),
@@ -94,29 +104,51 @@ NESS <- function(GCP = NULL, data, cell_type = NULL, rareness = FALSE, data.name
       }
     } else if (method == "umap") {
       for (i in seq_len(N)) {
-        set.seed(123 + i)
-        out <- uwot::umap(data.denoise,
-                          n_neighbors = perp,
-                          init = ifelse(initialization == 2, "pca", "lvrandom"),
-                          n_threads = 1,
-                          seed = 123 + i)
-        embedding <- out
+        if (is.null(knn.info)) {
+          set.seed(123 + i)
+          out <- uwot::umap(data.denoise,
+                            n_neighbors = perp,
+                            init = ifelse(initialization == 2, "pca", "lvrandom"),
+                            n_threads = 1,
+                            seed = 123 + i,
+                            ret_nn = TRUE) # Include nearest neighbor information in the output
+          # Ensure NN information is present
+          knn.info <- list(idx = out$nn$euclidean$idx, dist = out$nn$euclidean$dist)
+          embedding <- out$embedding
+        } else {
+          embedding <- uwot::umap(data.denoise,
+                                  n_neighbors = perp,
+                                  init = ifelse(initialization == 2, "pca", "lvrandom"),
+                                  n_threads = 1,
+                                  seed = 123 + i,
+                                  nn_method = knn.info,  # Reuse NN info  with proper format
+                                  ret_nn = FALSE)
+        }
         knn.mat[[i]] <- findKNN(embedding, k = k)$index
       }
     } else if (method == "phateR") {
+      phate.init <- NULL
       for (i in seq_len(N)) {
         set.seed(123 + i)
-        out <- phate(data.denoise,
+        out <- phate(distance_matrix_phateR,
+                     knn.dist.method = "precomputed",
                      ndim = 2,
                      knn = perp,
                      seed = 123 + i,
-                     verbose = TRUE)
+                     verbose = TRUE,
+                     init = phate.init) # reuse PHATE object if available
+        if (i == 1) phate.init <- out
         embedding <- out$embedding
         knn.mat[[i]] <- findKNN(embedding, k = 50)$index
       }
     }
 
     Y <- embedding
+
+
+
+
+
 
     # Accumulate neighbor counts (construct knn graph)
     knn.graph <- matrix(0, nrow = nrow(knn.mat[[1]]), ncol = nrow(knn.mat[[1]]))
@@ -134,40 +166,58 @@ NESS <- function(GCP = NULL, data, cell_type = NULL, rareness = FALSE, data.name
     local_stability[[j]] <- knn.score
 
 
+
+
+
+
+
+
+
     #rareness score:
     if (rareness) {
-      temp.out = matrix(ncol = N, nrow = N)
-      for (i in 1:(N - 1)) {
-        for (j in (i + 1):N) {
-          temp = c()
+      temp.out <- matrix(ncol = N, nrow = N)
+
+      # Use p and q as inner loop variables
+      for (p in 1:(N - 1)) {
+        for (q in (p + 1):N) {
+          temp <- c()
           for (mn in 1:dim(knn.mat[[1]])[1]) {
-            temp[mn] = length(intersect(knn.mat[[i]][mn, 1:k], knn.mat[[j]][mn, 1:k])) / k}
-          temp.out[i, j] = median(temp)
+            temp[mn] <- length(intersect(knn.mat[[p]][mn, 1:k], knn.mat[[q]][mn, 1:k])) / k
+          }
+          temp.out[p, q] <- median(temp)
         }
       }
 
-      rareness_mean = c()
+      rareness_mean <- c()
+      # Calculate mean rareness for indices 2 to (N-1)
       for (aa in 2:(N - 1)) {
-        rareness_mean[aa] = mean(c(temp.out[1:(aa - 1), aa], temp.out[aa, (aa + 1):N]))
+        rareness_mean[aa] <- mean(c(temp.out[1:(aa - 1), aa], temp.out[aa, (aa + 1):N]))
       }
-      rareness_mean[1] = mean(temp.out[1, 2:N])
-      rareness_mean[N] = mean(temp.out[1:(N - 1), N])
+      rareness_mean[1] <- mean(temp.out[1, 2:N])
+      rareness_mean[N] <- mean(temp.out[1:(N - 1), N])
 
-      rareness_variance = c()
+      rareness_variance <- c()
       for (aa in 2:(N - 1)) {
-        temp_list = c(temp.out[1:(aa - 1), aa], temp.out[aa, (aa + 1):N])
-        rareness_variance[aa] = sum((temp_list - rareness_mean[aa])^2) / length(temp_list)
+        temp_list <- c(temp.out[1:(aa - 1), aa], temp.out[aa, (aa + 1):N])
+        rareness_variance[aa] <- sum((temp_list - rareness_mean[aa])^2) / length(temp_list)
       }
-      rareness_variance[1] = sum((temp.out[1, 2:N] - rareness_mean[1])^2) / length(temp.out[1, 2:N])
-      rareness_variance[N] = sum((temp.out[1:(N - 1), N] - rareness_mean[1])^2) / length(temp.out[1:(N - 1), N])
+      rareness_variance[1] <- sum((temp.out[1, 2:N] - rareness_mean[1])^2) / length(temp.out[1, 2:N])
+      rareness_variance[N] <- sum((temp.out[1:(N - 1), N] - rareness_mean[N])^2) / length(temp.out[1:(N - 1), N])
 
       rare.mean[j] <- rareness_mean[N]
       rare.var[j] <- rareness_variance[N]
     }
 
-    boxplot_rareness_mean <- ggplot(data.frame(GCP = GCP), aes(y = rare.mean)) +
+    boxplot_rareness_mean <- ggplot(data.frame(GCP = GCP[1:tracking_GCP_length]), aes(y = rare.mean)) +
       geom_boxplot() +
       ggtitle(paste("Rareness Score Boxplot "))
+
+
+
+
+
+
+
 
     # Metrics depending on cell_type
     if (!is.null(cell_type)) {
@@ -177,6 +227,7 @@ NESS <- function(GCP = NULL, data, cell_type = NULL, rareness = FALSE, data.name
         geom_point(size = 1) +
         ggtitle(paste0(data.name, "_", method, "(", init_type, ")" , "_p", perp, "_pc", pc, "_colored by cell type"))
       plot_list_cell_type[[j]] <- plot11
+
     }
 
     # Plot by stability
@@ -196,25 +247,56 @@ NESS <- function(GCP = NULL, data, cell_type = NULL, rareness = FALSE, data.name
 
   } # End of the for-loop over GCP
 
-  stability_plot <- plot_improved(GCP, global_stability, "Global Stability", paste0(data.name, method, " - Global Stability (", init_type, ")"))
 
-  message <- paste("The final GCP is", GCP[j], "with a global stability of", global_stability[j])
+
+
+
+
+  #print(rare.mean)
+  #print(rare.var)
+  rare.mean.vec <- unlist(rare.mean)
+  med_value <- median(rare.mean.vec, na.rm = TRUE)
+  med_index <- which(rare.mean.vec == med_value)
+  # If nothing matched exactly (e.g., due to float rounding), find closest
+  if (length(med_index) == 0) {
+    med_index <- which.min(abs(rare.mean.vec - med_value))
+  }
+  # Print for debugging
+  print(paste("Index of median rareness score:", med_index))
+  print(paste("Corresponding GCP value for median rareness score:", GCP[med_index]))
+
+
+
+
+  plot_improved <- function(x, y, y_label, title) {
+    df <- data.frame(x = x, y = y)
+    ggplot(df, aes(x = x, y = y)) +
+      geom_line(color = "blue") +
+      geom_point(size = 2) +
+      xlab("GCP") +
+      ylab(y_label) +
+      ggtitle(title) +
+      theme_minimal()
+  }
+
+  stability_plot <- plot_improved(GCP[1:tracking_GCP_length], global_stability, "Global Stability", paste0(data.name, method, " - Global Stability (", init_type, ")"))
+
+  message <- paste("The final GCP is", GCP[med_index], "with a global stability of", global_stability[med_index])
   if (early_stop) print(message)
 
   # Return results
-  # Start building the return list
   result_list <- list(
-    local_stability = local_stability,
-    plot_list_stability = plot_list_stability,
-    global_stability_plot = metric_plots[["Global Stability"]]
+    local_stability = local_stability[[med_index]],
+    plot_list_stability = plot_list_stability[[med_index]], #stability score for plot with median rareness
+    global_stability_plot = stability_plot
   )
 
   # Add plots if applicable
   if (!is.null(cell_type)) {
-    result_list$plot_list_cell_type <- plot_list_cell_type
+    result_list$plot_list_cell_type <- plot_list_cell_type[[med_index]]
   }
   if (rareness) {
-    result_list$rareness_mean <- plot_improved(GCP, rare.mean, "Rareness Score(Mean)",paste0(data.name, method, " - Rareness Score(Mean) (", init_type, ")"))
+    result_list$rareness_mean <- plot_improved(GCP[1:tracking_GCP_length], rare.mean, "Rareness Score(Mean)", paste0(data.name, method, " - Rareness Score(Mean) (", init_type, ")"))
   }
 
   # Return the result
