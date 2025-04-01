@@ -28,5 +28,5 @@ For further questions and inquiries, please contact Xi Li (xili@hsph.harvard.edu
 
 # Tutorial
 
-[View the tutorial]([https://raw.githack.com/<your-username>/<repo-name>/main/tutorial/tutorial.html](https://raw.githubusercontent.com/Cathylixi/NESS/refs/heads/main/tutorial/tutorial.html))
+[View the tutorial](https://raw.githubusercontent.com/Cathylixi/NESS/refs/heads/main/tutorial/tutorial.html)
 
