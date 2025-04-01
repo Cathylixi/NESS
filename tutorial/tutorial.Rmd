@@ -1,0 +1,144 @@
+---
+title: "Utilities for Handling Single-cell RNA-seq Data"
+author: "Xi Li"
+package: NESS
+output: 
+  BiocStyle::html_document
+vignette: >
+  %\VignetteIndexEntry{Utilities for Handling Single-cell RNA-seq Data}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}  
+---
+
+
+```{r, echo=FALSE, results="hide", message=FALSE}
+#require(knitr)
+#opts_chunk$set(error=FALSE, message=FALSE, warning=FALSE)
+library(NESS)
+library(umap)
+library(uwot)
+library(Rtsne)
+library(fpc)
+library(ggplot2)
+library(ggsignif)
+library(RSpectra)
+library(BiocNeighbors)
+library(Rfast)
+library(cluster)
+library(clusterSim)
+library(pcaPP)
+library(dplyr)
+library(tidyverse)
+library(purrr)
+library(BiocParallel)
+library(bluster)
+library(ggpubr)
+library(Seurat)
+library(data.table)
+library(stringr)
+library(RColorBrewer)
+#install.packages("devtools")
+library(devtools)
+#devtools::install_github("JSB-UCLA/scDEED") 
+library(scDEED)
+#devtools::install_github("immunogenomics/lisi") 
+# library(lisi)
+
+#workdir<-"/Users/wgl/Desktop/data" 
+#setwd(workdir) 
+
+#install.packages("remotes")
+#remotes::install_github("LTLA/bluster")
+library(bluster)
+library(BiocParallel)
+#install.packages("fpc") 
+
+library(dbscan)
+library(fpc)
+```
+
+# Introduction
+Stochastic Neighbor Embedding (SNE) methods allow researchers to visualize high-dimensional single-cell RNA sequencing (scRNA-seq) data by projecting it into a low-dimensional space. These techniques, such as t-SNE, UMAP, and PHATE, convert pairwise similarities between cells into probabilities and aim to preserve local neighborhood structure. This facilitates the identification of cell populations and biological trajectories by clustering similar cells together in the embedded space.
+
+The NESS package builds on these methods by providing tools to assess and enhance the quality of low-dimensional embeddings. Specifically, NESS quantifies the stability of embeddings under repeated stochastic runs, helping identify reliable structures and transitions within the data. It offers functions for automatic hyperparameter selection, uncertainty visualization, and local stability estimation, enabling researchers to optimize neighbor embedding algorithms and extract more robust and biologically meaningful insights from scRNA-seq datasets.
+
+# Reading single-cell datasets from a Precomputed Expression Matrix (.RData)
+
+We begin by loading a processed Mouse Hematopoiesis single-cell dataset, stored as an .RData file:
+```{r}
+scale.data <- read.csv("../Data/mouse_hema_scale_data.csv", row.names = 1)
+cls <- read.csv("../Data/mouse_hema_scale_data_cls.csv", row.names = 1)
+cls <- cls[[1]]
+data.name <- "mouse_hema"
+```
+
+This dataset contains a scaled gene expression matrix scale.data and associated cellular state labels called cls.
+The original matrix has genes in rows and cells in columns. To prepare the data for downstream NESS analysis, we transpose it to produce a cell-by-gene matrix, with cells as rows and genes as columns:
+```{r}
+# scale.data <- t(scale.data)
+```
+
+If the original cellular state labels are ambiguous or overly specific, we simplify them by merging small or redundant subtypes into broader categories:
+```{r}
+cls <- gsub("[0-9]+Baso", "BASO", cls)
+cls <- gsub("14Mo|15Mo", "MO", cls)
+cls <- gsub("16Neu|17Neu", "NEU", cls)
+cls <- gsub("[0-9]+Ery", "ERY", cls)
+cls <- gsub("^[0-9]+", "", cls)
+
+cls <- factor(cls)  
+levels(cls)
+```
+
+# Applied NESS across multiple GCP Values
+
+To evaluate the stability and quality of SNE methods embeddings, we compute results across a range of GCP (global convergence parameter) values using NESS.
+
+We first set a list of GCP values.
+```{r}
+GCP = c(1,5,10,15,20,30,40,50,100,200,300,500) 
+```
+
+Then we call the NESS function, and it will return visual and numerical summaries to help evaluate embedding quality:
+	•	A scatter plot shows cells colored by how stable their neighborhood is across repeated runs, highlighting robust versus uncertain regions.
+	•	A line plot displays how overall embedding stability changes across different GCP values.
+	•	If cell type labels are provided, an additional plot shows the embedding colored by cell type for biological interpretation.
+	•	If rareness analysis is enabled, a summary plot visualizes how consistent neighborhood structures are across iterations, helping detect rare or transitional cell states.
+
+```{r}
+scale.data <- as.matrix(scale.data)
+result <- NESS(
+    GCP = GCP,
+    data = scale.data,
+    cell_type = cls,
+    rareness = TRUE,
+    data.name = "mouse_hema",
+    method = "tsne",
+    initialization = 1,
+    stability_threshold = 0.75,
+    early_stop = TRUE
+)
+```
+
+You can access and display these results directly:
+```{r}
+# Scatter plot colored by local stability
+result$plot_list_stability
+```
+
+```{r}
+# Global stability trend across GCP values
+result$global_stability_plot
+```
+
+```{r}
+# Embedding colored by cell type (if cell types were provided)
+result$plot_list_cell_type
+```
+
+```{r}
+# (Optional) Rareness score plot (if rareness = TRUE)
+result$rareness_mean
+```
+
+

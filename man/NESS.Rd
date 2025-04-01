@@ -9,7 +9,7 @@ NESS(
   data,
   cell_type = NULL,
   rareness = FALSE,
-  data.name = "sc_data",
+  data.name,
   method = "tsne",
   initialization = 1,
   stability_threshold = 0.75,
