@@ -901,8 +901,7 @@ for (metric_type in metric_list) {
                          n_neighbors = GCP_value, 
                          metric = metric_type,
                          init = "lvrandom", 
-                         n_threads = 1, 
-                         seed = 123 + i)
+                         n_threads = 1)
         
 
         knn.mat[[i]] = findKmknn(out, k = 50)$index

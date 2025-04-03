@@ -5,45 +5,71 @@
 \title{NESS: Neighbor Embedding Stability Scoring}
 \usage{
 NESS(
-  GCP = NULL,
   data,
+  ...,
+  data.name = "",
+  GCP = NULL,
   cell_type = NULL,
   rareness = FALSE,
-  data.name,
   method = "tsne",
   initialization = 1,
   stability_threshold = 0.75,
-  early_stop = TRUE
+  early_stop = TRUE,
+  seed_base = 1e+09,
+  N = 30,
+  k = 50,
+  svd_cutoff_ratio = 1.1,
+  svd_max_k = 30,
+  stop_global_stability_threshold = 0.9,
+  stop_relative_change_threshold = 0.05
 )
 }
 \arguments{
-\item{GCP}{Optional numeric vector of neighborhood sizes (e.g., perplexity for t-SNE).
-If \code{NULL}, the function generates a default sequence.}
-
 \item{data}{A numeric matrix or data frame with rows as observations and columns as features.}
 
-\item{cell_type}{Optional vector of cell type labels for coloring the embedding plots.}
-
-\item{rareness}{Logical; if \code{TRUE}, computes rareness metrics based on neighbor stability.}
+\item{...}{Additional arguments passed to the dimensionality reduction methods
+(\code{Rtsne}, \code{uwot::umap}, or \code{phateR::phate}), such as \code{theta} for t-SNE,
+\code{min_dist} for UMAP, or \code{decay} for PHATE.}
 
 \item{data.name}{Character string used in plot titles to label the dataset.}
 
+\item{GCP}{Optional numeric vector of neighborhood sizes (e.g., perplexity for t-SNE or
+number of neighbors for UMAP/PHATE). If \code{NULL}, a default sequence is generated.}
+
+\item{cell_type}{Optional vector of cell type labels for coloring the embedding plots.}
+
+\item{rareness}{Logical; if \code{TRUE}, computes rareness metrics based on neighbor consistency across embeddings.}
+
 \item{method}{Dimensionality reduction method to use. One of \code{"tsne"}, \code{"umap"}, or \code{"phateR"}.}
 
-\item{initialization}{Initialization method: \code{1} for random, \code{2} for PCA.}
+\item{initialization}{Initialization method: \code{1} for random, \code{2} for PCA-based initialization.}
 
-\item{stability_threshold}{Quantile threshold (default = 0.75) for determining neighbor stability.}
+\item{stability_threshold}{Quantile threshold (default = 0.75) for determining local neighbor stability.}
 
 \item{early_stop}{Logical; if \code{TRUE}, stops early if global stability saturates.}
+
+\item{seed_base}{Base random seed used for reproducibility.}
+
+\item{N}{Number of repeated embeddings runs.}
+
+\item{k}{Number of nearest neighbors to use when computing stability metrics (default=50).}
+
+\item{svd_cutoff_ratio}{Threshold ratio used to estimate intrinsic dimensionality via SVD (default = 1.1).}
+
+\item{svd_max_k}{Maximum number of SVD components to check when estimating dimensionality (default = 30).}
+
+\item{stop_global_stability_threshold}{Early stopping threshold for global stability (default = 0.9).}
+
+\item{stop_relative_change_threshold}{Early stopping threshold for relative improvement in global stability (default = 0.05).}
 }
 \value{
 A list containing:
 \describe{
-\item{local_stability}{A list of local kNN stability scores across GCP values.}
-\item{plot_list_stability}{A list of ggplot2 objects showing embeddings colored by stability.}
-\item{global_stability_plot}{A ggplot2 plot showing global stability vs. GCP.}
-\item{plot_list_cell_type}{(optional) Embedding plots colored by cell type.}
-\item{rareness_mean}{(optional) A plot of the rareness score (mean) if \code{rareness = TRUE}.}
+\item{local_stability}{A vector of local kNN stability scores for the selected GCP value.}
+\item{plot_list_stability}{A ggplot2 object showing the embedding colored by stability.}
+\item{global_stability_plot}{A ggplot2 line plot showing global stability across GCP values.}
+\item{plot_list_cell_type}{(optional) Embedding plot colored by cell type if \code{cell_type} is provided.}
+\item{rareness_mean}{(optional) A ggplot2 plot of rareness score (mean) if \code{rareness = TRUE}.}
 }
 }
 \description{

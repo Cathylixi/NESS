@@ -1,144 +1,141 @@
 ---
-title: "Utilities for Handling Single-cell RNA-seq Data"
-author: "Xi Li"
-package: NESS
+title: "NESS (Neighbor Embedding for Smooth Structures) for single-cell data analysis"
+author: "Xi Li, Jingyuan Hu"
 output: 
   BiocStyle::html_document
 vignette: >
-  %\VignetteIndexEntry{Utilities for Handling Single-cell RNA-seq Data}
+  %\VignetteIndexEntry{NESS (Neighbor Embedding for Smooth Structures) for single-cell data analysis}
   %\VignetteEngine{knitr::rmarkdown}
-  %\VignetteEncoding{UTF-8}  
+  %\VignetteEncoding{UTF-8}
 ---
 
 
-```{r, echo=FALSE, results="hide", message=FALSE}
-#require(knitr)
-#opts_chunk$set(error=FALSE, message=FALSE, warning=FALSE)
+
+```{r, results="hide", message=FALSE, warning=FALSE}
 library(NESS)
-library(umap)
-library(uwot)
-library(Rtsne)
-library(fpc)
-library(ggplot2)
-library(ggsignif)
-library(RSpectra)
-library(BiocNeighbors)
-library(Rfast)
-library(cluster)
-library(clusterSim)
-library(pcaPP)
-library(dplyr)
 library(tidyverse)
-library(purrr)
-library(BiocParallel)
-library(bluster)
-library(ggpubr)
-library(Seurat)
-library(data.table)
-library(stringr)
-library(RColorBrewer)
-#install.packages("devtools")
-library(devtools)
-#devtools::install_github("JSB-UCLA/scDEED") 
-library(scDEED)
-#devtools::install_github("immunogenomics/lisi") 
-# library(lisi)
-
-#workdir<-"/Users/wgl/Desktop/data" 
-#setwd(workdir) 
-
-#install.packages("remotes")
-#remotes::install_github("LTLA/bluster")
-library(bluster)
-library(BiocParallel)
-#install.packages("fpc") 
-
-library(dbscan)
-library(fpc)
 ```
 
 # Introduction
-Stochastic Neighbor Embedding (SNE) methods allow researchers to visualize high-dimensional single-cell RNA sequencing (scRNA-seq) data by projecting it into a low-dimensional space. These techniques, such as t-SNE, UMAP, and PHATE, convert pairwise similarities between cells into probabilities and aim to preserve local neighborhood structure. This facilitates the identification of cell populations and biological trajectories by clustering similar cells together in the embedded space.
 
-The NESS package builds on these methods by providing tools to assess and enhance the quality of low-dimensional embeddings. Specifically, NESS quantifies the stability of embeddings under repeated stochastic runs, helping identify reliable structures and transitions within the data. It offers functions for automatic hyperparameter selection, uncertainty visualization, and local stability estimation, enabling researchers to optimize neighbor embedding algorithms and extract more robust and biologically meaningful insights from scRNA-seq datasets.
+Data embedding methods are used to visualize high-dimensional single-cell RNA sequencing (scRNA-seq) data by projecting it into a low-dimensional space. Techniques like t-SNE, UMAP, and PHATE convert pairwise similarities between cells into probabilities, preserving local neighborhood structure. This helps identify cell populations and biological trajectories by clustering similar cells together.
 
-# Reading single-cell datasets from a Precomputed Expression Matrix (.RData)
+The NESS package builds on these methods by assessing and enhancing the quality of embeddings. It quantifies embedding stability across repeated runs, enabling us to evaluate reliability, select hyperparameters, and visualize uncertainty. NESS helps optimize neighbor embedding algorithms to extract robust, biologically meaningful insights from scRNA-seq data.
 
-We begin by loading a processed Mouse Hematopoiesis single-cell dataset, stored as an .RData file:
-```{r}
-scale.data <- read.csv("../Data/mouse_hema_scale_data.csv", row.names = 1)
-cls <- read.csv("../Data/mouse_hema_scale_data_cls.csv", row.names = 1)
-cls <- cls[[1]]
-data.name <- "mouse_hema"
-```
+# Loading Preprocessed Data
 
-This dataset contains a scaled gene expression matrix scale.data and associated cellular state labels called cls.
-The original matrix has genes in rows and cells in columns. To prepare the data for downstream NESS analysis, we transpose it to produce a cell-by-gene matrix, with cells as rows and genes as columns:
-```{r}
-# scale.data <- t(scale.data)
-```
-
-If the original cellular state labels are ambiguous or overly specific, we simplify them by merging small or redundant subtypes into broader categories:
-```{r}
-cls <- gsub("[0-9]+Baso", "BASO", cls)
-cls <- gsub("14Mo|15Mo", "MO", cls)
-cls <- gsub("16Neu|17Neu", "NEU", cls)
-cls <- gsub("[0-9]+Ery", "ERY", cls)
-cls <- gsub("^[0-9]+", "", cls)
-
-cls <- factor(cls)  
-levels(cls)
-```
-
-# Applied NESS across multiple GCP Values
-
-To evaluate the stability and quality of SNE methods embeddings, we compute results across a range of GCP (global convergence parameter) values using NESS.
-
-We first set a list of GCP values.
-```{r}
-GCP = c(1,5,10,15,20,30,40,50,100,200,300,500) 
-```
-
-Then we call the NESS function, and it will return visual and numerical summaries to help evaluate embedding quality:
-	•	A scatter plot shows cells colored by how stable their neighborhood is across repeated runs, highlighting robust versus uncertain regions.
-	•	A line plot displays how overall embedding stability changes across different GCP values.
-	•	If cell type labels are provided, an additional plot shows the embedding colored by cell type for biological interpretation.
-	•	If rareness analysis is enabled, a summary plot visualizes how consistent neighborhood structures are across iterations, helping detect rare or transitional cell states.
+We load a Mouse Hematopoiesis single-cell dataset that has already been processed using the standard Seurat pipeline.
 
 ```{r}
-scale.data <- as.matrix(scale.data)
-result <- NESS(
-    GCP = GCP,
-    data = scale.data,
-    cell_type = cls,
-    rareness = TRUE,
-    data.name = "mouse_hema",
-    method = "tsne",
-    initialization = 1,
-    stability_threshold = 0.75,
-    early_stop = TRUE
-)
+# Load example data
+load(system.file("Data", "mouse_hema_example.RData", package = "NESS"))
+
+# Show dimensions of the expression matrix
+dim(scale.data)
+
+# Show cell type distribution
+table(cls)
 ```
 
-You can access and display these results directly:
+# Running NESS across GCP Values
+
+We assess the stability of t-SNE embeddings across different values of the global convergence parameter (GCP).
+
+When running he `NESS()` function performs repeated runs of a selected dimensionality reduction method (t-SNE, UMAP, or PHATE) and evaluates the stability of local neighborhoods across embeddings. Below are descriptions of some important parameters used in the example below:
+
+- `data`: A matrix or data frame containing the scaled gene expression data (cells × features).
+- `GCP`: A vector of neighborhood sizes to test — this is analogous to `perplexity` in t-SNE or `n_neighbors` in UMAP/PHATE.
+- `cell_type`: Optional vector of known labels for coloring plots.
+- `rareness`: If `TRUE`, NESS computes a rareness score that identifies embeddings that deviate significantly from others.
+- `method`: Dimensionality reduction algorithm to use (`"tsne"`, `"umap"`, or `"phateR"`).
+- `initialization`: Set to `1` for random initialization, or `2` for PCA-based initialization.
+- `N`: The number of independent embeddings to run per GCP value (e.g., 30).
+- `k`: Number of nearest neighbors to use when computing stability (default = 50).
+- `stability_threshold`: Quantile used to define local neighborhood stability (default = 0.75).
+- `early_stop`: If `TRUE`, stops evaluation early if stability converges.
+
+Note: Running NESS with multiple GCP values and repeated embeddings can take approximately 15 minutes depending on your machine and parameter settings. For faster prototyping, consider reducing `N` or using fewer GCP values.
+
+```{r}
+GCP = c(5,30,100,300)
+# result <- NESS(
+#     data = scale.data,
+#     data.name = "mouse_hema",
+#     GCP = GCP,
+#     cell_type = cls,
+#     rareness = TRUE,
+#     method = "tsne",
+#     initialization = 1,
+#     N = 30,
+#     k = 50,
+#     stability_threshold = 0.75,
+#     early_stop = FALSE
+# )
+result <- readRDS("./result_tmp.rds")
+```
+
+The output includes multiple visualizations and summary statistics.
+
+# Results
+## Local Stability Map
+First, we plot the cell embedding visualization generated by optimal GCP score.
+```{r}
+# Embedding colored by cell type (if cell types were provided)
+result$plot_list_cell_type
+```
+
+
+The NESS Local Stability score measures how consistently each data point retains its neighbors across repeated embeddings. For a given point \( j \), the local stability score \( S_j \) is defined as the \( \lambda \)-quantile of its normalized neighbor counts:
+
+$$
+S_j = \text{Quantile}_\lambda \left( \left\{ \frac{K[j,l]}{N} : K[j,l] > 0, 1 \leq l \leq n \right\} \right)
+$$
+
+Here, \( K \) is the neighbor occurrence count matrix computed across \( N \) independent runs. We use \( \lambda = 0.75 \) by default.
+
 ```{r}
 # Scatter plot colored by local stability
 result$plot_list_stability
 ```
+
+## Global Stability Trend
+
+The Global Stability score summarizes the overall consistency of the embeddings. It is computed one per embedding as the average of all local stability scores across all data points:
+
+$$
+\text{Global Stability} = \frac{1}{n} \sum_{j=1}^n S_j
+$$
+
+A higher Global Stability score indicates that the neighbors of each data point are more consistently preserved across multiple runs. To select an appropriate GCP value, we recommend choosing the "knee" point with the smallest GCP that reach at least 0.9 stability score.
 
 ```{r}
 # Global stability trend across GCP values
 result$global_stability_plot
 ```
 
-```{r}
-# Embedding colored by cell type (if cell types were provided)
-result$plot_list_cell_type
-```
+## Rareness Score
+The NESS Rareness Score quantifies how dissimilar each low-dimensional embedding is from the others. It measures the extent to which a given embedding deviates from the remaining \( N - 1 \) embeddings in terms of neighborhood structure.
+
+For each pair of embeddings \( i \) and \( j \), and for each data point \( l \), we compute \( w_{ij,l} \), the number of shared \( k \)-nearest neighbors. The similarity between embeddings \( i \) and \( j \) is defined as:
+
+$$
+W(i, j) = \text{median} \left( \left\{ \frac{w_{ij,l}}{k} : 1 \leq l \leq n \right\} \right)
+$$
+
+We then construct an \( N \times N \) similarity matrix \( W \). For each embedding \( i \), we compute the mean \( m_i \) and variance \( v_i \) of the \( i \)-th column in \( W \), excluding the diagonal. The Rareness Score \( R_i \) is defined as:
+
+$$
+R_i = \frac{1}{m_i v_i}
+$$
+
+A higher Rareness Score indicates that the embedding is more distinct from the others and may contain unique distortions or artifacts. This score is useful for identifying outlier embeddings that differ substantially from the consensus structure.
 
 ```{r}
 # (Optional) Rareness score plot (if rareness = TRUE)
 result$rareness_mean
 ```
 
-
+# Session Info
+```{r}
+sessionInfo()
+```
