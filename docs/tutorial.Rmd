@@ -58,20 +58,19 @@ Note: Running NESS with multiple GCP values and repeated embeddings can take app
 
 ```{r}
 GCP = c(5,30,100,300)
-# result <- NESS(
-#     data = scale.data,
-#     data.name = "mouse_hema",
-#     GCP = GCP,
-#     cell_type = cls,
-#     rareness = TRUE,
-#     method = "tsne",
-#     initialization = 1,
-#     N = 30,
-#     k = 50,
-#     stability_threshold = 0.75,
-#     early_stop = FALSE
-# )
-result <- readRDS("./result_tmp.rds")
+result <- NESS(
+    data = scale.data,
+    data.name = "mouse_hema",
+    GCP = GCP,
+    cell_type = cls,
+    rareness = TRUE,
+    method = "tsne",
+    initialization = 1,
+    N = 30,
+    k = 50,
+    stability_threshold = 0.75,
+    early_stop = FALSE
+)
 ```
 
 The output includes multiple visualizations and summary statistics.
