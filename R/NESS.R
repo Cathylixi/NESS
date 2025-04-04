@@ -1,8 +1,8 @@
 #' NESS: Neighbor Embedding Stability Scoring
 #'
 #' Performs dimensionality reduction (t-SNE, UMAP, or PHATE) multiple times to evaluate
-#' local neighbor stability across repeated embeddings. This function is useful for
-#' evaluating the robustness of low-dimensional embeddings for high-dimensional data.
+#' local neighbor stability across repeated embeddings. This function helps assess
+#' the robustness of low-dimensional embeddings for high-dimensional data.
 #'
 #' @param data A numeric matrix or data frame with rows as observations and columns as features.
 #' @param ... Additional arguments passed to the dimensionality reduction methods
@@ -11,15 +11,15 @@
 #' @param data.name Character string used in plot titles to label the dataset.
 #' @param GCP Optional numeric vector of neighborhood sizes (e.g., perplexity for t-SNE or
 #'            number of neighbors for UMAP/PHATE). If `NULL`, a default sequence is generated.
-#' @param cell_type Optional vector of cell type labels for coloring the embedding plots.
+#' @param cluster Optional vector of cluster labels for coloring the embedding plots.
 #' @param rareness Logical; if `TRUE`, computes rareness metrics based on neighbor consistency across embeddings.
 #' @param method Dimensionality reduction method to use. One of `"tsne"`, `"umap"`, or `"phateR"`.
 #' @param initialization Initialization method: `1` for random, `2` for PCA-based initialization.
 #' @param stability_threshold Quantile threshold (default = 0.75) for determining local neighbor stability.
 #' @param early_stop Logical; if `TRUE`, stops early if global stability saturates.
 #' @param seed_base Base random seed used for reproducibility.
-#' @param N Number of repeated embeddings runs.
-#' @param k Number of nearest neighbors to use when computing stability metrics (default=50).
+#' @param N Number of repeated embedding runs.
+#' @param k Number of nearest neighbors to use when computing stability metrics (default = 50).
 #' @param svd_cutoff_ratio Threshold ratio used to estimate intrinsic dimensionality via SVD (default = 1.1).
 #' @param svd_max_k Maximum number of SVD components to check when estimating dimensionality (default = 30).
 #' @param stop_global_stability_threshold Early stopping threshold for global stability (default = 0.9).
@@ -27,11 +27,18 @@
 #'
 #' @return A list containing:
 #' \describe{
-#'   \item{local_stability}{A vector of local kNN stability scores for the selected GCP value.}
-#'   \item{plot_list_stability}{A ggplot2 object showing the embedding colored by stability.}
+#'   \item{GCP}{Vector of neighborhood sizes used for evaluation.}
+#'   \item{GCP.optim}{The selected GCP value corresponding to the median rareness score.}
+#'   \item{rare.mean}{(optional) Vector of rareness mean scores across GCP values (if `rareness = TRUE`).}
+#'   \item{rare.var}{(optional) Vector of rareness variance scores across GCP values (if `rareness = TRUE`).}
+#'   \item{embedding}{Embedding coordinates for the optimal GCP value.}
+#'   \item{local_stability}{Vector of local kNN stability scores (no names).}
+#'   \item{global_stability}{Vector of global stability scores across GCP values.}
+#'   \item{embedding_stability_colored}{A ggplot2 plot of the embedding colored by local stability score.}
 #'   \item{global_stability_plot}{A ggplot2 line plot showing global stability across GCP values.}
-#'   \item{plot_list_cell_type}{(optional) Embedding plot colored by cell type if `cell_type` is provided.}
-#'   \item{rareness_mean}{(optional) A ggplot2 plot of rareness score (mean) if `rareness = TRUE`.}
+#'   \item{embedding_cluster_colored}{(optional) Embedding plot colored by cluster labels, if `cluster` is provided.}
+#'   \item{rareness_mean}{(optional) ggplot2 plot of rareness score mean, if `rareness = TRUE`.},
+#'   \item{par}{A list of input parameters used to run the function for reproducibility.}
 #' }
 #'
 #' @import ggplot2
@@ -43,20 +50,19 @@
 #' @export
 
 
-
 NESS <- function(
     data,
     ...,
     data.name = "",
     GCP = NULL,
-    cell_type = NULL,
+    cluster = NULL,
     rareness = FALSE,
     method = "tsne",
     initialization = 1,
     stability_threshold = 0.75,
     early_stop = TRUE,
-    seed_base = 1000000000,
-    N = 30,
+    seed_base = 1,
+    N = 20,
     k = 50,
     svd_cutoff_ratio = 1.1,
     svd_max_k = 30,
@@ -76,18 +82,16 @@ NESS <- function(
   global_stability <- c()
   rare.mean <- c()
   rare.var <- c()
-  plot_list_cell_type <- list()
+  all_embedding <- list()
+  plot_list_cluster <- list()
   plot_list_stability <- list()
   local_stability <- list()
   init_type <- ifelse(initialization == 2, "PCA Initialization", "Random Initialization")
   prev_stability <- NULL
   tracking_GCP_length <- 0
 
-  distance_matrix <- as.matrix(dist(data.denoise, method = "euclidean"))
-  distance_matrix_phateR <- distance_matrix
-  diag(distance_matrix_phateR) <- 0
-
   for (j in seq_along(GCP)) {
+    cat(paste0("Running GCP value: ", GCP[j], " (", j, "/", length(GCP), ")\n"))
     tracking_GCP_length <- j
     gcp <- GCP[j]
     set.seed(seed_base + j)
@@ -96,8 +100,10 @@ NESS <- function(
 
     if (method == "tsne") {
       for (i in seq_len(N)) {
-        out <- Rtsne(distance_matrix,
-                          is_distance = TRUE,
+        if (i %% 10 == 0 || i == N) {
+          cat(paste0("  TSNE iteration: ", i, "/", N, "\n"))
+        }
+        out <- Rtsne(data.denoise,
                           perplexity = gcp,
                           check_duplicates = FALSE,
                           pca = (initialization == 2),
@@ -109,6 +115,9 @@ NESS <- function(
     }
    else if (method == "umap") {
       for (i in seq_len(N)) {
+        if (i %% 10 == 0 || i == N) {
+          cat(paste0("  UMAP iteration: ", i, "/", N, "\n"))
+        }
         set.seed(seed_base + i)
         if (is.null(knn.info)) {
           out <- uwot::umap(data.denoise,
@@ -134,6 +143,9 @@ NESS <- function(
     else if (method == "phateR") {
       phate.init <- NULL
       for (i in seq_len(N)) {
+        if (i %% 10 == 0 || i == N) {
+          cat(paste0("  PHATE iteration: ", i, "/", N, "\n"))
+        }
         set.seed(seed_base + i)
         out <- phate(data.denoise,
                      ndim = 2,
@@ -161,7 +173,10 @@ NESS <- function(
     knn.score <- sapply(seq_len(nrow(knn.mat[[1]])), function(i) {
       quantile(knn.graph[i, knn.graph[i, ] != 0] / N, stability_threshold)
     })
+    names(knn.score) <- NULL
     local_stability[[j]] <- knn.score
+
+    all_embedding[[j]] <- Y
 
     if (rareness) {
       temp.out <- matrix(ncol = N, nrow = N)
@@ -193,12 +208,12 @@ NESS <- function(
       rare.var[j] <- var(temp.out[upper.tri(temp.out)], na.rm = TRUE)
     }
 
-    if (!is.null(cell_type)) {
-      plot.data <- data.frame(dim1 = Y[, 1], dim2 = Y[, 2], cell_type = cell_type)
-      plot11 <- ggplot(plot.data, aes(dim1, dim2, colour = cell_type)) +
+    if (!is.null(cluster)) {
+      plot.data <- data.frame(dim1 = Y[, 1], dim2 = Y[, 2], cluster = cluster)
+      plot11 <- ggplot(plot.data, aes(dim1, dim2, colour = cluster)) +
         geom_point(size = 1) +
-        ggtitle(paste0(data.name, "_", method, "(", init_type, ")" , "_p", gcp, "_pc", pc, "_colored by cell type"))
-      plot_list_cell_type[[j]] <- plot11
+        ggtitle(paste0(data.name, "_", method, "(", init_type, ")" , "_p", gcp, "_pc", pc, "_colored by cluster"))
+      plot_list_cluster[[j]] <- plot11
     }
 
     plot.data <- data.frame(dim1 = Y[, 1], dim2 = Y[, 2], knn_score = knn.score)
@@ -209,16 +224,21 @@ NESS <- function(
 
     global_stability[j] <- mean(knn.score, na.rm = TRUE)
 
+    print(paste("GCP =", GCP[j], "→ Global Stability =", round(global_stability[j], 4)))
     if (!is.null(prev_stability)) {
       relative_change <- (global_stability[j] - prev_stability) / abs(prev_stability)
+      prev_stability <- global_stability[j]
+
+
       if (early_stop && (global_stability[j] >= stop_global_stability_threshold || relative_change <= stop_relative_change_threshold)) {
         break
       }
     }
-    prev_stability <- global_stability[j]
-    print(paste("GCP =", GCP[j], "→ Global Stability =", round(global_stability[j], 4)))
   }
 
+  names(global_stability) <- GCP
+  names(rare.mean) <- GCP
+  names(rare.var) <- GCP
   rare.mean.vec <- unlist(rare.mean)[1:tracking_GCP_length]
   med_value <- median(rare.mean.vec, na.rm = TRUE)
   med_index <- which.min(abs(rare.mean.vec - med_value))
@@ -244,12 +264,35 @@ NESS <- function(
   }
 
   result_list <- list(
+    GCP = GCP,
+    GCP.optim = GCP[med_index],
+    rare.mean = rare.mean,
+    rare.var = rare.var,
+    embedding = all_embedding[[med_index]],
     local_stability = local_stability[[med_index]],
-    plot_list_stability = plot_list_stability[[med_index]],
-    global_stability_plot = stability_plot
+    global_stability = global_stability,
+    embedding_stability_colored = plot_list_stability[[med_index]],
+    global_stability_plot = stability_plot,
+    par = list(
+      data.name = data.name,
+      GCP = GCP,
+      cluster = cluster,
+      rareness = rareness,
+      method = method,
+      initialization = initialization,
+      stability_threshold = stability_threshold,
+      early_stop = early_stop,
+      seed_base = seed_base,
+      N = N,
+      k = k,
+      svd_cutoff_ratio = svd_cutoff_ratio,
+      svd_max_k = svd_max_k,
+      stop_global_stability_threshold = stop_global_stability_threshold,
+      stop_relative_change_threshold = stop_relative_change_threshold
+    )
   )
-  if (!is.null(cell_type)) {
-    result_list$plot_list_cell_type <- plot_list_cell_type[[med_index]]
+  if (!is.null(cluster)) {
+    result_list$embedding_cluster_colored <- plot_list_cluster[[med_index]]
   }
   if (rareness) {
     result_list$rareness_mean <- plot_improved(GCP[1:tracking_GCP_length], rare.mean, "Rareness Score(Mean)", paste0(data.name, method, " - Rareness Score(Mean) (", init_type, ")"))

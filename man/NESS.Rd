@@ -9,14 +9,14 @@ NESS(
   ...,
   data.name = "",
   GCP = NULL,
-  cell_type = NULL,
+  cluster = NULL,
   rareness = FALSE,
   method = "tsne",
   initialization = 1,
   stability_threshold = 0.75,
   early_stop = TRUE,
-  seed_base = 1e+09,
-  N = 30,
+  seed_base = 1,
+  N = 20,
   k = 50,
   svd_cutoff_ratio = 1.1,
   svd_max_k = 30,
@@ -36,7 +36,7 @@ NESS(
 \item{GCP}{Optional numeric vector of neighborhood sizes (e.g., perplexity for t-SNE or
 number of neighbors for UMAP/PHATE). If \code{NULL}, a default sequence is generated.}
 
-\item{cell_type}{Optional vector of cell type labels for coloring the embedding plots.}
+\item{cluster}{Optional vector of cluster labels for coloring the embedding plots.}
 
 \item{rareness}{Logical; if \code{TRUE}, computes rareness metrics based on neighbor consistency across embeddings.}
 
@@ -50,9 +50,9 @@ number of neighbors for UMAP/PHATE). If \code{NULL}, a default sequence is gener
 
 \item{seed_base}{Base random seed used for reproducibility.}
 
-\item{N}{Number of repeated embeddings runs.}
+\item{N}{Number of repeated embedding runs.}
 
-\item{k}{Number of nearest neighbors to use when computing stability metrics (default=50).}
+\item{k}{Number of nearest neighbors to use when computing stability metrics (default = 50).}
 
 \item{svd_cutoff_ratio}{Threshold ratio used to estimate intrinsic dimensionality via SVD (default = 1.1).}
 
@@ -65,15 +65,22 @@ number of neighbors for UMAP/PHATE). If \code{NULL}, a default sequence is gener
 \value{
 A list containing:
 \describe{
-\item{local_stability}{A vector of local kNN stability scores for the selected GCP value.}
-\item{plot_list_stability}{A ggplot2 object showing the embedding colored by stability.}
+\item{GCP}{Vector of neighborhood sizes used for evaluation.}
+\item{GCP.optim}{The selected GCP value corresponding to the median rareness score.}
+\item{rare.mean}{(optional) Vector of rareness mean scores across GCP values (if \code{rareness = TRUE}).}
+\item{rare.var}{(optional) Vector of rareness variance scores across GCP values (if \code{rareness = TRUE}).}
+\item{embedding}{Embedding coordinates for the optimal GCP value.}
+\item{local_stability}{Vector of local kNN stability scores (no names).}
+\item{global_stability}{Vector of global stability scores across GCP values.}
+\item{embedding_stability_colored}{A ggplot2 plot of the embedding colored by local stability score.}
 \item{global_stability_plot}{A ggplot2 line plot showing global stability across GCP values.}
-\item{plot_list_cell_type}{(optional) Embedding plot colored by cell type if \code{cell_type} is provided.}
-\item{rareness_mean}{(optional) A ggplot2 plot of rareness score (mean) if \code{rareness = TRUE}.}
+\item{embedding_cluster_colored}{(optional) Embedding plot colored by cluster labels, if \code{cluster} is provided.}
+\item{rareness_mean}{(optional) ggplot2 plot of rareness score mean, if \code{rareness = TRUE}.},
+\item{par}{A list of input parameters used to run the function for reproducibility.}
 }
 }
 \description{
 Performs dimensionality reduction (t-SNE, UMAP, or PHATE) multiple times to evaluate
-local neighbor stability across repeated embeddings. This function is useful for
-evaluating the robustness of low-dimensional embeddings for high-dimensional data.
+local neighbor stability across repeated embeddings. This function helps assess
+the robustness of low-dimensional embeddings for high-dimensional data.
 }
