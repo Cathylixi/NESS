@@ -84,6 +84,7 @@ NESS <- function(
   rare.var <- c()
   all_embedding <- list()
   plot_list_cluster <- list()
+  plot_list_rareness <- list()
   plot_list_stability <- list()
   local_stability <- list()
   init_type <- ifelse(initialization == 2, "PCA Initialization", "Random Initialization")
@@ -237,8 +238,6 @@ NESS <- function(
   }
 
   names(global_stability) <- GCP
-  names(rare.mean) <- GCP
-  names(rare.var) <- GCP
   rare.mean.vec <- unlist(rare.mean)[1:tracking_GCP_length]
   med_value <- median(rare.mean.vec, na.rm = TRUE)
   med_index <- which.min(abs(rare.mean.vec - med_value))
@@ -266,8 +265,6 @@ NESS <- function(
   result_list <- list(
     GCP = GCP,
     GCP.optim = GCP[med_index],
-    rare.mean = rare.mean,
-    rare.var = rare.var,
     embedding = all_embedding[[med_index]],
     local_stability = local_stability[[med_index]],
     global_stability = global_stability,
@@ -295,7 +292,29 @@ NESS <- function(
     result_list$embedding_cluster_colored <- plot_list_cluster[[med_index]]
   }
   if (rareness) {
-    result_list$rareness_mean <- plot_improved(GCP[1:tracking_GCP_length], rare.mean, "Rareness Score(Mean)", paste0(data.name, method, " - Rareness Score(Mean) (", init_type, ")"))
+    result_list$rareness_mean_plot <- plot_improved(GCP[1:tracking_GCP_length], rare.mean, "Rareness Score(Mean)", paste0(data.name, method, " - Rareness Score(Mean) (", init_type, ")"))
+
+    names(rare.mean) <- GCP
+    names(rare.var) <- GCP
+    # Create the plot
+    result_list$rareness_boxplot <- ggplot(plot_data <- data.frame(
+                                              GCP = factor(GCP, levels = GCP),
+                                              mean = as.numeric(rare.mean),
+                                              sd = sqrt(as.numeric(rare.var))
+                                            ),
+                               aes(x = GCP, y = mean)) +
+      geom_point(size = 3) +
+      geom_errorbar(aes(ymin = mean - sd, ymax = mean + sd), width = 0.2) +
+      labs(
+        title = "Rareness Score accross GCP",
+        x = "GCP",
+        y = "Median Embedding Rareness Score"
+      ) +
+      theme_minimal()
+
+
+    result_list$rare.mean = rare.mean
+    result_list$rare.var = rare.var
   }
 
   return(result_list)

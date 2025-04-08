@@ -126,11 +126,11 @@ $$
 R_i = \frac{1}{m_i v_i}
 $$
 
-A higher Rareness Score indicates that the embedding is more distinct from the others and may contain unique distortions or artifacts. This score is useful for identifying outlier embeddings that differ substantially from the consensus structure.
+A higher Rareness Score indicates that the embedding is more distinct from the others and may contain unique distortions or artifacts. This score is useful for identifying outlier embeddings that differ substantially from the consensus structure. The boxplot show the distribution of embedding rareness accross different choice of GCP.
 
 ```{r}
 # (Optional) Rareness score plot (if rareness = TRUE)
-result$rareness_mean
+result$rareness_boxplot
 ```
 
 # Session Info
