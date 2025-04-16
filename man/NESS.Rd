@@ -10,18 +10,17 @@ NESS(
   data.name = "",
   GCP = NULL,
   cluster = NULL,
-  rareness = FALSE,
   method = "tsne",
   initialization = 1,
   stability_threshold = 0.75,
-  early_stop = TRUE,
+  early_stop = FALSE,
   seed_base = 1,
   N = 20,
   k = 50,
   svd_cutoff_ratio = 1.1,
   svd_max_k = 30,
-  stop_global_stability_threshold = 0.9,
-  stop_relative_change_threshold = 0.05
+  stop_global_stability_threshold = 0.98,
+  stop_relative_change_threshold = 0.02
 )
 }
 \arguments{
@@ -37,8 +36,6 @@ NESS(
 number of neighbors for UMAP/PHATE). If \code{NULL}, a default sequence is generated.}
 
 \item{cluster}{Optional vector of cluster labels for coloring the embedding plots.}
-
-\item{rareness}{Logical; if \code{TRUE}, computes rareness metrics based on neighbor consistency across embeddings.}
 
 \item{method}{Dimensionality reduction method to use. One of \code{"tsne"}, \code{"umap"}, or \code{"phateR"}.}
 
@@ -61,6 +58,8 @@ number of neighbors for UMAP/PHATE). If \code{NULL}, a default sequence is gener
 \item{stop_global_stability_threshold}{Early stopping threshold for global stability (default = 0.9).}
 
 \item{stop_relative_change_threshold}{Early stopping threshold for relative improvement in global stability (default = 0.05).}
+
+\item{rareness}{Logical; if \code{TRUE}, computes rareness metrics based on neighbor consistency across embeddings.}
 }
 \value{
 A list containing:
