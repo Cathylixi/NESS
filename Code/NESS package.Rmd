@@ -178,7 +178,7 @@ NESS <- function(GCP = NULL, data, cell_type = NULL, rareness = FALSE, data.name
         } 
 
         # Plot by stability
-        plot.data <- data.frame(dim1 = Y[, 1], dim2 = Y[, 2], knn_score = knn.score)
+        plot.data <- data.frame(dim1 = Y[, 1], dim2 = Y[, 2], local_stability = knn.score)
         plot22 <- ggplot(plot.data, aes(dim1, dim2, colour = local_stability)) +
             geom_point(size = 1) +
             ggtitle(paste0(data.name, "_", method, "(", init_type, ")" , "_p", perp, "_pc", pc, "_colored by local stability score"))
