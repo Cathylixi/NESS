@@ -232,9 +232,10 @@ NESS <- function(
 
 # Plot helper for stability embedding
 plot_embedding_stability <- function(embedding, knn_score, data.name, method, gcp) {
-  plot.data <- data.frame(dim1 = embedding[, 1], dim2 = embedding[, 2], knn_score = knn_score)
-  ggplot(plot.data, aes(dim1, dim2, colour = knn_score)) +
+  plot.data <- data.frame(dim1 = embedding[, 1], dim2 = embedding[, 2], local_stability = knn_score)
+  ggplot(plot.data, aes(dim1, dim2, colour = local_stability)) +
     geom_point(size = 1) +
+    scale_color_gradient(name = "local_stability") + 
     ggtitle(paste0(data.name, "_", method, "_p", gcp, "_colored by local stability score")) +
     theme_minimal()
 }
