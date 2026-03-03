@@ -48,6 +48,7 @@
 #' @importFrom RSpectra svds
 #' @importFrom BiocNeighbors findKNN
 #' @importFrom stats median
+#' @import Matrix
 #' @export
 
 
@@ -163,7 +164,11 @@ NESS <- function(
     embedding_plot_list[[j]] <- plot_embedding(best_embedding[[j]], cluster, data.name, method, gcp, pc)
 
     # Calculate stability score
-    knn.graph <- matrix(0, nrow = nrow(knn.mat[[1]]), ncol = nrow(knn.mat[[1]]))
+    knn.graph <- Matrix(0,
+                        nrow = nrow(knn.mat[[1]]),
+                        ncol = nrow(knn.mat[[1]]),
+                        sparse = TRUE
+    )
     for (i in seq_len(N)) {
       for (l in seq_len(nrow(knn.mat[[1]]))) {
         knn.graph[l, knn.mat[[i]][l, 1:k]] <- knn.graph[l, knn.mat[[i]][l, 1:k]] + 1
