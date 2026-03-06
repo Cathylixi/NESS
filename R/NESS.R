@@ -68,7 +68,8 @@ NESS <- function(
     svd_cutoff_ratio = 1.1,
     svd_max_k = 30,
     stop_global_stability_threshold = 0.98,
-    stop_relative_change_threshold = 0.02
+    stop_relative_change_threshold = 0.02,
+    max_cells_stability = 5000
 ) {
   # Setup parameters
   set.seed(seed_base)
@@ -126,6 +127,25 @@ NESS <- function(
       all_embeddings[[i]] <- embedding
       knn.mat[[i]] <- findKNN(embedding, k = k)$index
     }
+
+    # -------------------------------------------------
+    # Subsample cells for stability calculation
+    # -------------------------------------------------
+    n_cells <- nrow(all_embeddings[[1]])
+
+    if (n_cells > max_cells_stability) {
+      set.seed(seed_base + j)
+      subset_idx <- sample(n_cells, max_cells_stability)
+    } else {
+      subset_idx <- seq_len(n_cells)
+    }
+
+    # Subset embeddings
+    all_embeddings <- lapply(all_embeddings, function(e) e[subset_idx, , drop = FALSE])
+
+    # Recompute kNN on the subset
+    knn.mat <- lapply(all_embeddings, function(e) findKNN(e, k = k)$index)
+
 
     # Compute rareness score
     temp.out <- matrix(ncol = N, nrow = N)
@@ -240,7 +260,7 @@ plot_embedding_stability <- function(embedding, knn_score, data.name, method, gc
   plot.data <- data.frame(dim1 = embedding[, 1], dim2 = embedding[, 2], local_stability = knn_score)
   ggplot(plot.data, aes(dim1, dim2, colour = local_stability)) +
     geom_point(size = 1) +
-    scale_color_gradient(name = "local_stability") + 
+    scale_color_gradient(name = "local_stability") +
     ggtitle(paste0(data.name, "_", method, "_p", gcp, "_colored by local stability score")) +
     theme_minimal()
 }
